@@ -2,8 +2,9 @@ use std::str::FromStr;
 use polymarket_client_sdk_v2::POLYGON;
 use polymarket_client_sdk_v2::auth::{ApiKey, LocalSigner, Signer};
 use polymarket_client_sdk_v2::clob::{Client, Config};
+use polymarket_client_sdk_v2::types::Address;
 
-pub async fn authenticate_user(private_key: &str) -> Result<ApiKey, anyhow::Error> {
+pub async fn authenticate_user(private_key: &str) -> Result<(ApiKey, Address), anyhow::Error> {
     if private_key.is_empty() {
         return Err(anyhow::anyhow!("Private key cannot be empty"));
     }
@@ -19,5 +20,5 @@ pub async fn authenticate_user(private_key: &str) -> Result<ApiKey, anyhow::Erro
 
     let credentials = client.credentials();
 
-    Ok(credentials.key())
+    Ok((credentials.key(), client.address()))
 }
