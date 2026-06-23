@@ -1,10 +1,14 @@
 [package]
-name = "pm-core"
+name = "pm-explorer"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
 
 [dependencies]
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 anyhow.workspace = true
+pm-core = { path = "../../libs/pm-core" }
 polymarket_client_sdk_v2 = { version = "0.5.1", features = ["clob", "gamma", "data"] }
