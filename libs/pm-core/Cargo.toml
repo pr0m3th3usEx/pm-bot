@@ -6,5 +6,13 @@ authors.workspace = true
 license.workspace = true
 
 [dependencies]
-anyhow.workspace = true
-polymarket_client_sdk_v2 = { version = "0.5.1", features = ["clob", "gamma", "data"] }
+rust_decimal.workspace = true
+tokio       = { workspace = true, features = ["full"] }
+tokio-util  = { workspace = true }
+tracing.workspace = true
+async-trait.workspace = true
+thiserror.workspace = true
+serde       = { workspace = true }
+
+[dev-dependencies]
+rust_decimal_macros = "1"

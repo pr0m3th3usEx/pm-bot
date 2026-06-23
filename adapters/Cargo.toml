@@ -1,0 +1,24 @@
+[package]
+name = "adapters"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+pm-core             = { path = "../libs/pm-core" }
+polymarket_client_sdk_v2 = { version = "0.5.1", features = ["clob", "gamma", "data"] }
+rusqlite.workspace  = true
+tokio.workspace     = true
+tokio-util.workspace = true
+tracing.workspace   = true
+async-trait.workspace = true
+thiserror.workspace = true
+serde.workspace     = true
+serde_json.workspace = true
+rust_decimal.workspace = true
+anyhow.workspace    = true
+
+[dev-dependencies]
+rust_decimal_macros = "1"
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
