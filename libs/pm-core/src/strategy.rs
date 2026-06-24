@@ -8,9 +8,7 @@ use rust_decimal::Decimal;
 pub struct StrategyContext<'a> {
     /// Latest BTC tick price.
     pub price: Price,
-    // TODO(confirm): if strike comes from the live feed at window-open rather than
-    // from Gamma, this field stays here but `market.strike` would be None. The
-    // strategy still receives it — source doesn't change the trait.
+    /// Price to beat, sourced from Gamma API Market Event data via Market.strike.
     pub strike: Price,
     pub now: Timestamp,
     /// Trading cutoff: order must submit before this.

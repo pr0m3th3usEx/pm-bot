@@ -21,7 +21,11 @@ impl GammaMarketCatalog {
 #[async_trait]
 impl MarketCatalog for GammaMarketCatalog {
     async fn resolve(&self, slug: &MarketSlug) -> Result<Market> {
-        // TODO: call gamma client.market_by_slug, map response to pm_core::Market
+        // TODO: call gamma_client.market_by_slug(slug), then:
+        // - map clob_token_ids + outcomes → Vec<MarketOutcome>
+        // - read strike from the Market Event data (event.strike or equivalent field)
+        // - set closes_at = resolves_at (they are the same in Polymarket markets)
+        // - map opens_at / resolves_at from the API timestamps
         todo!("resolve market slug via Gamma API: {slug}")
     }
 }

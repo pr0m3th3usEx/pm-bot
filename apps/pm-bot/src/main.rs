@@ -99,7 +99,7 @@ async fn main() -> anyhow::Result<()> {
 
     // 4. Wire channels.
     let (tick_tx, tick_rx)           = broadcast::channel::<pm_core::domain::Tick>(256);
-    let _ = tick_tx; // TODO: moved into price_feed_task once the feed is wired.
+    let _ = tick_tx; // passed into price_feed_task once ChainlinkPriceFeed is wired below.
     let (market_tx, market_rx)       = watch::channel::<Option<ActiveMarket>>(None);
     let (intent_tx, intent_rx)       = mpsc::channel::<pm_core::domain::Intent>(8);
     let (order_update_tx, order_update_rx) = mpsc::channel::<pm_core::domain::OrderUpdate>(64);
@@ -120,8 +120,8 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // 6. Spawn tasks.
-    // TODO: construct real BinancePriceFeed and pass Box<dyn PriceFeed>
-    // let price_feed = Box::new(adapters::binance_price_feed::BinancePriceFeed::connect().await?);
+    // TODO: wire ChainlinkPriceFeed (V1 price source; V2 may aggregate multiple feeds)
+    // let price_feed = Box::new(adapters::chainlink_price_feed::ChainlinkPriceFeed::connect().await?);
     // let h_price = tokio::spawn(price_feed_task(price_feed, tick_tx, cancel.clone()));
 
     let h_market = tokio::spawn(market_rotation_task(

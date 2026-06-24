@@ -15,11 +15,12 @@ pub struct Market {
     pub event_id: String,
     pub condition_id: String,
     pub outcomes: Vec<MarketOutcome>,
-    // TODO(confirm): is strike the BTC price at window-open (live from feed) or
-    // a field the Gamma API returns? If live from feed, remove this field and
-    // pass price-vs-reference into StrategyContext directly.
+    /// Price to beat for this round. Populated by GammaMarketCatalog from the
+    /// Market Event data returned by the Gamma API. None only while the market
+    /// is still Pending (metadata not yet available).
     pub strike: Option<Price>,
     pub opens_at: Timestamp,
+    /// Same as resolves_at — Polymarket closes the book at resolution time.
     pub closes_at: Timestamp,
     pub resolves_at: Timestamp,
     pub status: MarketStatus,
