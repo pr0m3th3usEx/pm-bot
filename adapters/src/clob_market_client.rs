@@ -148,7 +148,6 @@ where
             .order(order_id)
             .await
             .map_err(|e| CoreError::Adapter(format!("CLOB order fetch failed: {e}")))?;
-
         match order.status {
             OrderStatusType::Live | OrderStatusType::Delayed => Ok(OrderUpdate::Submitted {
                 order_id: order_id.to_owned(),
@@ -296,5 +295,13 @@ where
 
         // 7. Return gross payout: 1 USDC per winning share.
         Ok(Usdc(position.shares.0))
+    }
+
+    async fn heartbeat(&self) -> Result<()> {
+        self.client
+            .post_heartbeat(None)
+            .await
+            .map_err(|e| CoreError::Adapter(format!("CLOB heartbeat failed: {e}")))?;
+        Ok(())
     }
 }

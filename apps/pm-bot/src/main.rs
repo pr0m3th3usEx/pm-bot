@@ -257,6 +257,9 @@ fn todo_client() -> impl pm_core::ports::MarketClient {
         ) -> pm_core::error::Result<pm_core::types::Usdc> {
             todo!()
         }
+        async fn heartbeat(&self) -> pm_core::error::Result<()> {
+            todo!()
+        }
     }
     TodoClient
 }

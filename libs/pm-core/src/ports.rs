@@ -41,6 +41,9 @@ pub trait MarketClient: Send + Sync {
 
     /// Redeem a winning position. Returns pUSD received.
     async fn redeem(&self, position: &PositionRecord) -> Result<Usdc>;
+
+    /// Heartbeat to keep the CLOB session alive. Returns the server timestamp.
+    async fn heartbeat(&self) -> Result<()>;
 }
 
 // ─── Strategy ─────────────────────────────────────────────────────────────────
