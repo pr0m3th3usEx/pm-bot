@@ -37,7 +37,11 @@ pub trait MarketClient: Send + Sync {
     /// Fetch current order state (used by the order-status poller).
     /// `position_id` is our internal DB row ID — the CLOB doesn't know it, but
     /// the poller does (it comes from the store query), so we thread it here.
-    async fn order_status(&self, order_id: &str, position_id: i64) -> Result<crate::domain::OrderUpdate>;
+    async fn order_status(
+        &self,
+        order_id: &str,
+        position_id: i64,
+    ) -> Result<crate::domain::OrderUpdate>;
 
     /// Redeem a winning position. Returns pUSD received.
     async fn redeem(&self, position: &PositionRecord) -> Result<Usdc>;

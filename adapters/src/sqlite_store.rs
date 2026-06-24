@@ -1,6 +1,6 @@
 use alloy::hex::FromHex as _;
-use alloy::primitives::FixedBytes;
 use alloy::primitives::hex as alloy_hex;
+use alloy::primitives::FixedBytes;
 use async_trait::async_trait;
 use pm_core::{
     domain::{PositionRecord, PositionUpdate},
@@ -168,23 +168,18 @@ impl Store for SqliteStore {
         let records = stmt
             .query_map([], |row| {
                 let condition_hex: String = row.get(5)?;
-                let condition_id =
-                    FixedBytes::<32>::from_hex(&condition_hex).map_err(|e| {
-                        rusqlite::Error::InvalidParameterName(format!(
-                            "bad condition_id hex: {e}"
-                        ))
-                    })?;
+                let condition_id = FixedBytes::<32>::from_hex(&condition_hex).map_err(|e| {
+                    rusqlite::Error::InvalidParameterName(format!("bad condition_id hex: {e}"))
+                })?;
                 let token_str: String = row.get(4)?;
                 let token_id = U256::from_str(&token_str).map_err(|e| {
                     rusqlite::Error::InvalidParameterName(format!("bad token_id: {e}"))
                 })?;
-                let side = Side::from_str(&row.get::<_, String>(2)?).map_err(|e| {
-                    rusqlite::Error::InvalidParameterName(format!("bad side: {e}"))
+                let side = Side::from_str(&row.get::<_, String>(2)?)
+                    .map_err(|e| rusqlite::Error::InvalidParameterName(format!("bad side: {e}")))?;
+                let status = PositionStatus::from_str(&row.get::<_, String>(11)?).map_err(|e| {
+                    rusqlite::Error::InvalidParameterName(format!("bad status: {e}"))
                 })?;
-                let status =
-                    PositionStatus::from_str(&row.get::<_, String>(11)?).map_err(|e| {
-                        rusqlite::Error::InvalidParameterName(format!("bad status: {e}"))
-                    })?;
 
                 let parse_dec = |s: &str| {
                     s.parse::<rust_decimal::Decimal>().map_err(|e| {

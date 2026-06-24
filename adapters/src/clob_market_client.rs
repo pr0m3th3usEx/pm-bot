@@ -1,5 +1,5 @@
 use alloy::{
-    primitives::{Address, B256, U256, hex as alloy_hex},
+    primitives::{hex as alloy_hex, Address, B256, U256},
     sol,
     sol_types::{eip712_domain, SolCall, SolStruct},
 };
@@ -285,7 +285,9 @@ where
             .map_err(|e| CoreError::Adapter(format!("relayer submit rejected: {e}")))?
             .json()
             .await
-            .map_err(|e| CoreError::Adapter(format!("relayer submit response parse failed: {e}")))?;
+            .map_err(|e| {
+                CoreError::Adapter(format!("relayer submit response parse failed: {e}"))
+            })?;
 
         tracing::info!(
             state = %resp.state,

@@ -127,7 +127,7 @@ async fn main() -> anyhow::Result<()> {
 
     // 6. Spawn tasks.
     // TODO: wire ChainlinkPriceFeed (V1 price source; V2 may aggregate multiple feeds)
-    // let price_feed = Box::new(adapters::chainlink_price_feed::ChainlinkPriceFeed::connect().await?);
+    // let price_feed = Box::new(adapters::chainlink_price_feed::ChainlinkPriceFeed::connect());
     // let h_price = tokio::spawn(price_feed_task(price_feed, tick_tx, cancel.clone()));
 
     let h_market = tokio::spawn(market_rotation_task(
