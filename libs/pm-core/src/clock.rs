@@ -55,7 +55,9 @@ impl MarketClock {
 mod tests {
     use super::*;
 
-    fn clock() -> MarketClock { MarketClock::btc_5m() }
+    fn clock() -> MarketClock {
+        MarketClock::btc_5m()
+    }
 
     #[test]
     fn current_window_start_aligns() {

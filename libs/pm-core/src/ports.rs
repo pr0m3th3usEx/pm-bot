@@ -29,11 +29,7 @@ pub trait MarketClient: Send + Sync {
     async fn quote(&self, token_id: &TokenId, side: Side, shares: Shares) -> Result<Price>;
 
     /// Submit a limit order. Returns the CLOB order ID.
-    async fn place_order(
-        &self,
-        intent: &Intent,
-        token_id: &TokenId,
-    ) -> Result<String>;
+    async fn place_order(&self, intent: &Intent, token_id: &TokenId) -> Result<String>;
 
     /// Cancel a resting order.
     async fn cancel_order(&self, order_id: &str) -> Result<()>;
@@ -53,7 +49,8 @@ pub trait MarketClient: Send + Sync {
 /// Evaluated on every Tick. Pure: no I/O, no mutable state.
 #[async_trait]
 pub trait Strategy: Send + Sync {
-    fn evaluate(&self, ctx: &crate::strategy::StrategyContext) -> crate::strategy::StrategyDecision;
+    fn evaluate(&self, ctx: &crate::strategy::StrategyContext)
+        -> crate::strategy::StrategyDecision;
 }
 
 // ─── Sizing model ─────────────────────────────────────────────────────────────
@@ -72,7 +69,10 @@ pub trait EntryPolicy: Send + Sync {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Admission { Admit, Reject }
+pub enum Admission {
+    Admit,
+    Reject,
+}
 
 // ─── Store ────────────────────────────────────────────────────────────────────
 

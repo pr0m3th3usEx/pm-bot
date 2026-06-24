@@ -23,13 +23,9 @@ use pm_core::{
     state::RoundSlotState,
     strategy::V1BasicStrategy,
     tasks::{
-        decision_center::decision_center_task,
-        executor::executor_task,
-        heartbeat::heartbeat_task,
-        market_rotation::market_rotation_task,
-        order_status_poller::order_status_poller_task,
-        persistence::persistence_task,
-        settlement::settlement_task,
+        decision_center::decision_center_task, executor::executor_task, heartbeat::heartbeat_task,
+        market_rotation::market_rotation_task, order_status_poller::order_status_poller_task,
+        persistence::persistence_task, settlement::settlement_task,
     },
     types::Shares,
 };
@@ -41,7 +37,11 @@ struct FixedSizingModel {
 }
 
 impl pm_core::ports::SizingModel for FixedSizingModel {
-    fn size(&self, _bankroll: &pm_core::types::Usdc, _limit_price: &pm_core::types::Price) -> Shares {
+    fn size(
+        &self,
+        _bankroll: &pm_core::types::Usdc,
+        _limit_price: &pm_core::types::Price,
+    ) -> Shares {
         self.shares.clone()
     }
 }
@@ -52,7 +52,11 @@ struct OnePositionPolicy;
 
 impl EntryPolicy for OnePositionPolicy {
     fn admit(&self, slot: &RoundSlotState, _intent: &pm_core::domain::Intent) -> Admission {
-        if slot.is_empty() { Admission::Admit } else { Admission::Reject }
+        if slot.is_empty() {
+            Admission::Admit
+        } else {
+            Admission::Reject
+        }
     }
 }
 
@@ -69,14 +73,13 @@ async fn main() -> anyhow::Result<()> {
     info!("pm-bot starting");
 
     // 2. Load secrets.
-    let _private_key = std::env::var("POLYGON_PRIVATE_KEY")
-        .expect("POLYGON_PRIVATE_KEY must be set");
+    let _private_key =
+        std::env::var("POLYGON_PRIVATE_KEY").expect("POLYGON_PRIVATE_KEY must be set");
 
     // 3. Build adapters.
     // TODO: construct real CLOB and Gamma clients here (see pm-explorer for auth pattern).
     let store: Arc<dyn pm_core::ports::Store> = Arc::new({
-        adapters::sqlite_store::SqliteStore::open("pm-bot.db")
-            .expect("failed to open SQLite store")
+        adapters::sqlite_store::SqliteStore::open("pm-bot.db").expect("failed to open SQLite store")
     });
     let catalog: Arc<dyn pm_core::ports::MarketCatalog> = Arc::new(
         // TODO: adapters::gamma_market_catalog::GammaMarketCatalog::new(gamma_client)
@@ -98,13 +101,13 @@ async fn main() -> anyhow::Result<()> {
     let clock = MarketClock::btc_5m();
 
     // 4. Wire channels.
-    let (tick_tx, tick_rx)           = broadcast::channel::<pm_core::domain::Tick>(256);
+    let (tick_tx, tick_rx) = broadcast::channel::<pm_core::domain::Tick>(256);
     let _ = tick_tx; // passed into price_feed_task once ChainlinkPriceFeed is wired below.
-    let (market_tx, market_rx)       = watch::channel::<Option<ActiveMarket>>(None);
-    let (intent_tx, intent_rx)       = mpsc::channel::<pm_core::domain::Intent>(8);
+    let (market_tx, market_rx) = watch::channel::<Option<ActiveMarket>>(None);
+    let (intent_tx, intent_rx) = mpsc::channel::<pm_core::domain::Intent>(8);
     let (order_update_tx, order_update_rx) = mpsc::channel::<pm_core::domain::OrderUpdate>(64);
-    let (settled_tx, settled_rx)     = mpsc::channel::<pm_core::domain::Settled>(16);
-    let (slot_tx, slot_rx)           = watch::channel::<RoundSlotState>(RoundSlotState::Empty);
+    let (settled_tx, settled_rx) = mpsc::channel::<pm_core::domain::Settled>(16);
+    let (slot_tx, slot_rx) = watch::channel::<RoundSlotState>(RoundSlotState::Empty);
 
     let cancel = CancellationToken::new();
 
@@ -115,7 +118,10 @@ async fn main() -> anyhow::Result<()> {
     let next_window = clock.next_window_ts(now_secs);
     let wait_ms = (next_window.0 - pm_core::types::Timestamp::now_ms().0).max(0) as u64;
     if wait_ms > 0 {
-        info!(wait_secs = wait_ms / 1000, "waiting for next window to start trading");
+        info!(
+            wait_secs = wait_ms / 1000,
+            "waiting for next window to start trading"
+        );
         tokio::time::sleep(Duration::from_millis(wait_ms)).await;
     }
 
@@ -207,7 +213,10 @@ fn todo_catalog() -> impl pm_core::ports::MarketCatalog {
     struct TodoCatalog;
     #[async_trait::async_trait]
     impl pm_core::ports::MarketCatalog for TodoCatalog {
-        async fn resolve(&self, _slug: &pm_core::types::MarketSlug) -> pm_core::error::Result<pm_core::domain::Market> {
+        async fn resolve(
+            &self,
+            _slug: &pm_core::types::MarketSlug,
+        ) -> pm_core::error::Result<pm_core::domain::Market> {
             todo!("wire real GammaMarketCatalog")
         }
     }
@@ -218,12 +227,39 @@ fn todo_client() -> impl pm_core::ports::MarketClient {
     struct TodoClient;
     #[async_trait::async_trait]
     impl pm_core::ports::MarketClient for TodoClient {
-        async fn quote(&self, _token_id: &pm_core::types::TokenId, _side: pm_core::types::Side, _shares: Shares) -> pm_core::error::Result<pm_core::types::Price> { todo!() }
-        async fn place_order(&self, _intent: &pm_core::domain::Intent, _token_id: &pm_core::types::TokenId) -> pm_core::error::Result<String> { todo!() }
-        async fn cancel_order(&self, _order_id: &str) -> pm_core::error::Result<()> { todo!() }
-        async fn order_status(&self, _order_id: &str) -> pm_core::error::Result<pm_core::domain::OrderUpdate> { todo!() }
-        async fn redeem(&self, _position: &pm_core::domain::PositionRecord) -> pm_core::error::Result<pm_core::types::Usdc> { todo!() }
-        async fn heartbeat(&self) -> pm_core::error::Result<()> { todo!() }
+        async fn quote(
+            &self,
+            _token_id: &pm_core::types::TokenId,
+            _side: pm_core::types::Side,
+            _shares: Shares,
+        ) -> pm_core::error::Result<pm_core::types::Price> {
+            todo!()
+        }
+        async fn place_order(
+            &self,
+            _intent: &pm_core::domain::Intent,
+            _token_id: &pm_core::types::TokenId,
+        ) -> pm_core::error::Result<String> {
+            todo!()
+        }
+        async fn cancel_order(&self, _order_id: &str) -> pm_core::error::Result<()> {
+            todo!()
+        }
+        async fn order_status(
+            &self,
+            _order_id: &str,
+        ) -> pm_core::error::Result<pm_core::domain::OrderUpdate> {
+            todo!()
+        }
+        async fn redeem(
+            &self,
+            _position: &pm_core::domain::PositionRecord,
+        ) -> pm_core::error::Result<pm_core::types::Usdc> {
+            todo!()
+        }
+        async fn heartbeat(&self) -> pm_core::error::Result<()> {
+            todo!()
+        }
     }
     TodoClient
 }

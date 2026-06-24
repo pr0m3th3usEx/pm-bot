@@ -1,3 +1,4 @@
+use polymarket_client_sdk_v2::types::U256;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
@@ -14,8 +15,12 @@ impl Timestamp {
             .as_millis() as i64;
         Self(ms)
     }
-    pub fn as_secs(&self) -> i64 { self.0 / 1000 }
-    pub fn from_secs(s: i64) -> Self { Self(s * 1000) }
+    pub fn as_secs(&self) -> i64 {
+        self.0 / 1000
+    }
+    pub fn from_secs(s: i64) -> Self {
+        Self(s * 1000)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -25,7 +30,7 @@ pub struct Shares(pub Decimal);
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Usdc(pub Decimal);
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TokenId(pub String);
+pub struct TokenId(pub U256);
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct MarketSlug(pub String);
 
@@ -43,7 +48,10 @@ pub enum Side {
 }
 impl Side {
     pub fn as_str(self) -> &'static str {
-        match self { Self::Buy => "buy", Self::Sell => "sell" }
+        match self {
+            Self::Buy => "buy",
+            Self::Sell => "sell",
+        }
     }
 }
 
@@ -55,8 +63,22 @@ pub enum Outcome {
 }
 impl Outcome {
     pub fn as_str(self) -> &'static str {
-        match self { Self::Up => "up", Self::Down => "down" }
+        match self {
+            Self::Up => "up",
+            Self::Down => "down",
+        }
     }
+}
+
+/// Determines how a market's strike is sourced and how resolution is detected.
+/// Detected from Gamma market tags at resolve time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MarketType {
+    /// BTC/crypto Up/Down N-minute market (tag slug "up-or-down").
+    /// Strike fetched from Polymarket past-results API using the previous round's closePrice.
+    UpDown,
+    /// All other market types. Strike not applicable; resolution detected via Gamma.
+    Other,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -82,22 +104,27 @@ pub enum PositionStatus {
 impl PositionStatus {
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::Submitted  => "submitted",
-            Self::Filled     => "filled",
-            Self::Settling   => "settling",
-            Self::Won        => "won",
-            Self::Lost       => "lost",
-            Self::Rejected   => "rejected",
-            Self::Cancelled  => "cancelled",
+            Self::Submitted => "submitted",
+            Self::Filled => "filled",
+            Self::Settling => "settling",
+            Self::Won => "won",
+            Self::Lost => "lost",
+            Self::Rejected => "rejected",
+            Self::Cancelled => "cancelled",
         }
     }
 
     /// True for Won/Lost — counts toward success rate.
-    pub fn is_resolved(self) -> bool { matches!(self, Self::Won | Self::Lost) }
+    pub fn is_resolved(self) -> bool {
+        matches!(self, Self::Won | Self::Lost)
+    }
 
     /// True for Won/Lost/Rejected/Cancelled.
     pub fn is_terminal(self) -> bool {
-        matches!(self, Self::Won | Self::Lost | Self::Rejected | Self::Cancelled)
+        matches!(
+            self,
+            Self::Won | Self::Lost | Self::Rejected | Self::Cancelled
+        )
     }
 }
 
@@ -105,14 +132,14 @@ impl FromStr for PositionStatus {
     type Err = crate::error::CoreError;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "submitted"  => Ok(Self::Submitted),
-            "filled"     => Ok(Self::Filled),
-            "settling"   => Ok(Self::Settling),
-            "won"        => Ok(Self::Won),
-            "lost"       => Ok(Self::Lost),
-            "rejected"   => Ok(Self::Rejected),
-            "cancelled"  => Ok(Self::Cancelled),
-            other        => Err(crate::error::CoreError::UnknownVariant(other.to_owned())),
+            "submitted" => Ok(Self::Submitted),
+            "filled" => Ok(Self::Filled),
+            "settling" => Ok(Self::Settling),
+            "won" => Ok(Self::Won),
+            "lost" => Ok(Self::Lost),
+            "rejected" => Ok(Self::Rejected),
+            "cancelled" => Ok(Self::Cancelled),
+            other => Err(crate::error::CoreError::UnknownVariant(other.to_owned())),
         }
     }
 }
@@ -121,9 +148,9 @@ impl FromStr for Side {
     type Err = crate::error::CoreError;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "buy"  => Ok(Self::Buy),
+            "buy" => Ok(Self::Buy),
             "sell" => Ok(Self::Sell),
-            other  => Err(crate::error::CoreError::UnknownVariant(other.to_owned())),
+            other => Err(crate::error::CoreError::UnknownVariant(other.to_owned())),
         }
     }
 }
@@ -134,7 +161,13 @@ impl FromStr for Side {
 pub const SIDE_CHECK_VALUES: &[&str] = &["buy", "sell"];
 /// The values that must appear in `CHECK(status IN (...))` — edit both together.
 pub const STATUS_CHECK_VALUES: &[&str] = &[
-    "submitted", "filled", "settling", "won", "lost", "rejected", "cancelled",
+    "submitted",
+    "filled",
+    "settling",
+    "won",
+    "lost",
+    "rejected",
+    "cancelled",
 ];
 
 #[cfg(test)]
@@ -151,14 +184,22 @@ mod drift_tests {
                 v.as_str()
             );
         }
-        assert_eq!(variants.len(), SIDE_CHECK_VALUES.len(), "SIDE_CHECK_VALUES length mismatch");
+        assert_eq!(
+            variants.len(),
+            SIDE_CHECK_VALUES.len(),
+            "SIDE_CHECK_VALUES length mismatch"
+        );
     }
 
     #[test]
     fn position_status_as_str_matches_check_constraint() {
         let variants = [
-            PositionStatus::Submitted, PositionStatus::Filled, PositionStatus::Settling,
-            PositionStatus::Won,       PositionStatus::Lost,   PositionStatus::Rejected,
+            PositionStatus::Submitted,
+            PositionStatus::Filled,
+            PositionStatus::Settling,
+            PositionStatus::Won,
+            PositionStatus::Lost,
+            PositionStatus::Rejected,
             PositionStatus::Cancelled,
         ];
         for v in variants {
@@ -168,6 +209,10 @@ mod drift_tests {
                 v.as_str()
             );
         }
-        assert_eq!(variants.len(), STATUS_CHECK_VALUES.len(), "STATUS_CHECK_VALUES length mismatch");
+        assert_eq!(
+            variants.len(),
+            STATUS_CHECK_VALUES.len(),
+            "STATUS_CHECK_VALUES length mismatch"
+        );
     }
 }
