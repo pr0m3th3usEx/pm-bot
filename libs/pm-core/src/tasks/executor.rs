@@ -71,6 +71,7 @@ pub async fn executor_task(
                             side: intent.side,
                             outcome_name: mo.name.clone(),
                             token_id: token_id.clone(),
+                            condition_id: market.condition_id,
                             order_id: None,
                             shares: intent.shares.clone(),
                             limit_price: intent.limit_price.clone(),

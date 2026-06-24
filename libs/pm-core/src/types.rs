@@ -55,6 +55,15 @@ impl Side {
     }
 }
 
+impl Into<polymarket_client_sdk_v2::clob::types::Side> for Side {
+    fn into(self) -> polymarket_client_sdk_v2::clob::types::Side {
+        match self {
+            Self::Buy => polymarket_client_sdk_v2::clob::types::Side::Buy,
+            Self::Sell => polymarket_client_sdk_v2::clob::types::Side::Sell,
+        }
+    }
+}
+
 /// V1-scoped: BTC Up/Down vocabulary. Not stored directly — outcome_name is free TEXT.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Outcome {

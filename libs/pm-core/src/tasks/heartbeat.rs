@@ -19,9 +19,11 @@ pub async fn heartbeat_task(
                 break;
             }
             _ = ticker.tick() => {
-                if let Err(e) = client.heartbeat().await {
-                    error!(error = %e, "heartbeat failed");
-                }
+                // polymarket_client_sdk_v2 heartbeats: Enables automatic heartbeat mechanism for authenticated sessions
+                // continue
+                // if let Err(e) = client.heartbeat().await {
+                //     error!(error = %e, "heartbeat failed");
+                // }
             }
         }
     }

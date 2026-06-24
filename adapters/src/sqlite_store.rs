@@ -1,10 +1,16 @@
+use alloy::hex::FromHex as _;
+use alloy::primitives::FixedBytes;
+use alloy::primitives::hex as alloy_hex;
 use async_trait::async_trait;
 use pm_core::{
     domain::{PositionRecord, PositionUpdate},
     error::{CoreError, Result},
     ports::Store,
+    types::{MarketSlug, PositionStatus, Price, Shares, Side, Timestamp, TokenId, Usdc},
 };
+use polymarket_client_sdk_v2::types::U256;
 use rusqlite::{params, Connection};
+use std::str::FromStr;
 use std::sync::Mutex;
 
 pub struct SqliteStore {
@@ -18,6 +24,7 @@ CREATE TABLE IF NOT EXISTS positions (
     side         TEXT    NOT NULL CHECK(side IN ('buy','sell')),
     outcome_name TEXT    NOT NULL,
     token_id     TEXT    NOT NULL,
+    condition_id TEXT    NOT NULL,
     order_id     TEXT,
     shares       TEXT    NOT NULL,
     limit_price  TEXT    NOT NULL,
@@ -67,14 +74,15 @@ impl Store for SqliteStore {
             .map_err(|e| CoreError::Store(e.to_string()))?;
         conn.execute(
             "INSERT INTO positions
-             (market_slug, side, outcome_name, token_id, order_id, shares, limit_price,
-              avg_price, strike, status, realized_pnl, submitted_at, updated_at)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)",
+             (market_slug, side, outcome_name, token_id, condition_id, order_id, shares,
+              limit_price, avg_price, strike, status, realized_pnl, submitted_at, updated_at)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)",
             params![
                 rec.market_slug.0,
                 rec.side.as_str(),
                 rec.outcome_name,
                 rec.token_id.0.to_string(),
+                alloy_hex::encode_prefixed(rec.condition_id),
                 rec.order_id.as_deref(),
                 dec_to_text(&rec.shares.0),
                 dec_to_text(&rec.limit_price.0),
@@ -143,7 +151,79 @@ impl Store for SqliteStore {
     }
 
     async fn open_positions(&self) -> Result<Vec<PositionRecord>> {
-        todo!("query positions WHERE status NOT IN ('won','lost','rejected','cancelled')")
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| CoreError::Store(e.to_string()))?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, market_slug, side, outcome_name, token_id, condition_id,
+                        order_id, shares, limit_price, avg_price, strike,
+                        status, realized_pnl, submitted_at, updated_at
+                 FROM positions
+                 WHERE status NOT IN ('won','lost','rejected','cancelled')",
+            )
+            .map_err(|e| CoreError::Store(e.to_string()))?;
+
+        let records = stmt
+            .query_map([], |row| {
+                let condition_hex: String = row.get(5)?;
+                let condition_id =
+                    FixedBytes::<32>::from_hex(&condition_hex).map_err(|e| {
+                        rusqlite::Error::InvalidParameterName(format!(
+                            "bad condition_id hex: {e}"
+                        ))
+                    })?;
+                let token_str: String = row.get(4)?;
+                let token_id = U256::from_str(&token_str).map_err(|e| {
+                    rusqlite::Error::InvalidParameterName(format!("bad token_id: {e}"))
+                })?;
+                let side = Side::from_str(&row.get::<_, String>(2)?).map_err(|e| {
+                    rusqlite::Error::InvalidParameterName(format!("bad side: {e}"))
+                })?;
+                let status =
+                    PositionStatus::from_str(&row.get::<_, String>(11)?).map_err(|e| {
+                        rusqlite::Error::InvalidParameterName(format!("bad status: {e}"))
+                    })?;
+
+                let parse_dec = |s: &str| {
+                    s.parse::<rust_decimal::Decimal>().map_err(|e| {
+                        rusqlite::Error::InvalidParameterName(format!("bad decimal: {e}"))
+                    })
+                };
+
+                Ok(PositionRecord {
+                    id: Some(row.get(0)?),
+                    market_slug: MarketSlug(row.get(1)?),
+                    side,
+                    outcome_name: row.get(3)?,
+                    token_id: TokenId(token_id),
+                    condition_id,
+                    order_id: row.get(6)?,
+                    shares: Shares(parse_dec(&row.get::<_, String>(7)?)?),
+                    limit_price: Price(parse_dec(&row.get::<_, String>(8)?)?),
+                    avg_price: row
+                        .get::<_, Option<String>>(9)?
+                        .map(|s| parse_dec(&s).map(Price))
+                        .transpose()?,
+                    strike: row
+                        .get::<_, Option<String>>(10)?
+                        .map(|s| parse_dec(&s).map(Price))
+                        .transpose()?,
+                    status,
+                    realized_pnl: row
+                        .get::<_, Option<String>>(12)?
+                        .map(|s| parse_dec(&s).map(Usdc))
+                        .transpose()?,
+                    submitted_at: Timestamp(row.get(13)?),
+                    updated_at: Timestamp(row.get(14)?),
+                })
+            })
+            .map_err(|e| CoreError::Store(e.to_string()))?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(|e| CoreError::Store(e.to_string()))?;
+
+        Ok(records)
     }
 
     async fn success_rate_counts(&self) -> Result<(u64, u64)> {
@@ -175,10 +255,7 @@ impl Store for SqliteStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pm_core::types::{
-        MarketSlug, PositionStatus, Price, Shares, Side, Timestamp, TokenId, Usdc,
-    };
-    use polymarket_client_sdk_v2::types::U256;
+    use alloy::primitives::FixedBytes;
     use rust_decimal_macros::dec;
 
     fn sample_record() -> PositionRecord {
@@ -188,6 +265,7 @@ mod tests {
             side: Side::Buy,
             outcome_name: "up".into(),
             token_id: TokenId(U256::from(1u64)),
+            condition_id: FixedBytes::from([1u8; 32]),
             order_id: None,
             shares: Shares(dec!(5)),
             limit_price: Price(dec!(0.55)),

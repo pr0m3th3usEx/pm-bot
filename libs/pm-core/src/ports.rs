@@ -25,8 +25,8 @@ pub trait MarketCatalog: Send + Sync {
 /// The CLOB surface: quotes, orders, status, redemption, keepalive.
 #[async_trait]
 pub trait MarketClient: Send + Sync {
-    /// Best executable price for the given token, side, and size.
-    async fn quote(&self, token_id: &TokenId, side: Side, shares: Shares) -> Result<Price>;
+    /// Best bid (BUY) or best ask (SELL) price for the given token.
+    async fn quote(&self, token_id: &TokenId, side: Side) -> Result<Price>;
 
     /// Submit a limit order. Returns the CLOB order ID.
     async fn place_order(&self, intent: &Intent, token_id: &TokenId) -> Result<String>;
@@ -35,13 +35,12 @@ pub trait MarketClient: Send + Sync {
     async fn cancel_order(&self, order_id: &str) -> Result<()>;
 
     /// Fetch current order state (used by the order-status poller).
-    async fn order_status(&self, order_id: &str) -> Result<crate::domain::OrderUpdate>;
+    /// `position_id` is our internal DB row ID — the CLOB doesn't know it, but
+    /// the poller does (it comes from the store query), so we thread it here.
+    async fn order_status(&self, order_id: &str, position_id: i64) -> Result<crate::domain::OrderUpdate>;
 
     /// Redeem a winning position. Returns pUSD received.
     async fn redeem(&self, position: &PositionRecord) -> Result<Usdc>;
-
-    /// Keepalive ping to the CLOB session.
-    async fn heartbeat(&self) -> Result<()>;
 }
 
 // ─── Strategy ─────────────────────────────────────────────────────────────────

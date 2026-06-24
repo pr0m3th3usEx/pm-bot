@@ -1,48 +1,300 @@
+use alloy::{
+    primitives::{Address, B256, U256, hex as alloy_hex},
+    sol,
+    sol_types::{eip712_domain, SolCall, SolStruct},
+};
 use async_trait::async_trait;
 use pm_core::{
     domain::{Intent, OrderUpdate, PositionRecord},
-    error::Result,
+    error::{CoreError, Result},
     ports::MarketClient,
     types::{Price, Shares, Side, TokenId, Usdc},
 };
-use polymarket_client_sdk_v2::clob::Client as ClobClient;
+use polymarket_client_sdk_v2::{
+    auth::{state::Authenticated, Kind, Signer as PmSigner},
+    clob::{
+        types::{request::PriceRequest, OrderStatusType},
+        Client as ClobClient,
+    },
+};
+use serde::Deserialize;
 
-pub struct ClobMarketClient {
-    #[allow(dead_code)]
-    client: ClobClient,
+const RELAYER_URL: &str = "https://relayer-v2.polymarket.com";
+const COLLATERAL_ADAPTER: &str = "0xAdA100Db00Ca00073811820692005400218FcE1f";
+const COLLATERAL_TOKEN: &str = "0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB";
+const POLYGON_CHAIN_ID: u64 = 137;
+
+sol! {
+    function redeemPositions(
+        address collateralToken,
+        bytes32 parentCollectionId,
+        bytes32 conditionId,
+        uint256[] indexSets
+    );
+
+    #[derive(Debug)]
+    struct SafeTx {
+        address to;
+        uint256 value;
+        bytes   data;
+        uint8   operation;
+        uint256 safeTxGas;
+        uint256 baseGas;
+        uint256 gasPrice;
+        address gasToken;
+        address refundReceiver;
+        uint256 nonce;
+    }
 }
 
-impl ClobMarketClient {
-    pub fn new(client: ClobClient) -> Self {
-        Self { client }
+#[derive(Deserialize)]
+struct RelayerNonceResponse {
+    nonce: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RelayerSubmitResponse {
+    state: String,
+    transaction_id: Option<String>,
+}
+
+pub struct ClobMarketClient<K, Sgn>
+where
+    K: Kind + Send + Sync,
+    Sgn: PmSigner + alloy::signers::Signer + Send + Sync,
+{
+    client: ClobClient<Authenticated<K>>,
+    signer: Sgn,
+    safe_address: Address,
+    http: reqwest::Client,
+}
+
+impl<K, Sgn> ClobMarketClient<K, Sgn>
+where
+    K: Kind + Send + Sync,
+    Sgn: PmSigner + alloy::signers::Signer + Send + Sync,
+{
+    pub fn new(client: ClobClient<Authenticated<K>>, signer: Sgn, safe_address: Address) -> Self {
+        Self {
+            client,
+            signer,
+            safe_address,
+            http: reqwest::Client::new(),
+        }
     }
 }
 
 #[async_trait]
-impl MarketClient for ClobMarketClient {
-    async fn quote(&self, token_id: &TokenId, side: Side, shares: Shares) -> Result<Price> {
-        let _ = (side, shares);
-        todo!("fetch best quote from CLOB for token {}", token_id.0)
+impl<K, Sgn> MarketClient for ClobMarketClient<K, Sgn>
+where
+    K: Kind + Send + Sync,
+    Sgn: PmSigner + alloy::signers::Signer + Send + Sync,
+{
+    async fn quote(&self, token_id: &TokenId, side: Side) -> Result<Price> {
+        let request = PriceRequest::builder()
+            .token_id(token_id.0)
+            .side(side.into())
+            .build();
+
+        let response = self
+            .client
+            .price(&request)
+            .await
+            .map_err(|e| CoreError::Adapter(format!("CLOB price request failed: {e}")))?;
+
+        Ok(Price(response.price))
     }
 
     async fn place_order(&self, intent: &Intent, token_id: &TokenId) -> Result<String> {
-        let _ = (intent, token_id);
-        todo!("sign and post limit order to CLOB")
+        let order = self
+            .client
+            .limit_order()
+            .price(intent.limit_price.0)
+            .side(intent.side.into())
+            .size(intent.shares.0)
+            .token_id(token_id.0)
+            .build()
+            .await
+            .map_err(|e| CoreError::Adapter(format!("CLOB order build failed: {e}")))?;
+
+        let signed_order = self
+            .client
+            .sign(&self.signer, order)
+            .await
+            .map_err(|e| CoreError::Adapter(format!("CLOB order sign failed: {e}")))?;
+
+        let response = self
+            .client
+            .post_order(signed_order)
+            .await
+            .map_err(|e| CoreError::Adapter(format!("CLOB post_order failed: {e}")))?;
+
+        Ok(response.order_id)
     }
 
     async fn cancel_order(&self, order_id: &str) -> Result<()> {
-        todo!("cancel CLOB order {order_id}")
+        self.client
+            .cancel_order(order_id)
+            .await
+            .map_err(|e| CoreError::Adapter(format!("CLOB cancel_order failed: {e}")))?;
+
+        Ok(())
     }
 
-    async fn order_status(&self, order_id: &str) -> Result<OrderUpdate> {
-        todo!("fetch order status from CLOB for {order_id}")
+    async fn order_status(&self, order_id: &str, position_id: i64) -> Result<OrderUpdate> {
+        let order = self
+            .client
+            .order(order_id)
+            .await
+            .map_err(|e| CoreError::Adapter(format!("CLOB order fetch failed: {e}")))?;
+
+        match order.status {
+            OrderStatusType::Live | OrderStatusType::Delayed => Ok(OrderUpdate::Submitted {
+                order_id: order_id.to_owned(),
+                position_id,
+            }),
+            OrderStatusType::Matched => Ok(OrderUpdate::Filled {
+                order_id: order_id.to_owned(),
+                avg_price: Price(order.price),
+                size_matched: Shares(order.size_matched),
+                position_id,
+            }),
+            OrderStatusType::Canceled => Ok(OrderUpdate::Cancelled {
+                order_id: order_id.to_owned(),
+                position_id,
+            }),
+            OrderStatusType::Unmatched => Ok(OrderUpdate::Rejected {
+                order_id: order_id.to_owned(),
+                reason: None,
+                position_id,
+            }),
+            _ => Err(CoreError::Adapter(format!(
+                "CLOB order {order_id}: unhandled status {:?}",
+                order.status
+            ))),
+        }
     }
 
     async fn redeem(&self, position: &PositionRecord) -> Result<Usdc> {
-        todo!("redeem winning position {:?}", position.id)
-    }
+        let adapter: Address = COLLATERAL_ADAPTER
+            .parse()
+            .map_err(|e| CoreError::Adapter(format!("bad adapter address: {e}")))?;
+        let collateral: Address = COLLATERAL_TOKEN
+            .parse()
+            .map_err(|e| CoreError::Adapter(format!("bad collateral token address: {e}")))?;
 
-    async fn heartbeat(&self) -> Result<()> {
-        todo!("post CLOB heartbeat")
+        // 1. Encode redeemPositions calldata.
+        let calldata = redeemPositionsCall {
+            collateralToken: collateral,
+            parentCollectionId: B256::ZERO,
+            conditionId: position.condition_id,
+            indexSets: vec![U256::from(1u64), U256::from(2u64)],
+        }
+        .abi_encode();
+
+        let signer_address = alloy::signers::Signer::address(&self.signer);
+
+        // 2. GET nonce from relayer.
+        let nonce_resp: RelayerNonceResponse = self
+            .http
+            .get(format!("{RELAYER_URL}/v1/account/transactions/params"))
+            .query(&[
+                ("address", signer_address.to_checksum(None)),
+                ("type", "SAFE".to_owned()),
+            ])
+            .send()
+            .await
+            .map_err(|e| CoreError::Adapter(format!("relayer nonce request failed: {e}")))?
+            .json()
+            .await
+            .map_err(|e| CoreError::Adapter(format!("relayer nonce parse failed: {e}")))?;
+
+        let nonce_val: U256 = nonce_resp
+            .nonce
+            .parse()
+            .map_err(|e| CoreError::Adapter(format!("bad nonce '{}': {e}", nonce_resp.nonce)))?;
+
+        // 3. Build EIP-712 SafeTx hash.
+        let domain = eip712_domain! {
+            chain_id: POLYGON_CHAIN_ID,
+            verifying_contract: self.safe_address,
+        };
+
+        let safe_tx = SafeTx {
+            to: adapter,
+            value: U256::ZERO,
+            data: calldata.clone().into(),
+            operation: 0,
+            safeTxGas: U256::ZERO,
+            baseGas: U256::ZERO,
+            gasPrice: U256::ZERO,
+            gasToken: Address::ZERO,
+            refundReceiver: Address::ZERO,
+            nonce: nonce_val,
+        };
+
+        let signing_hash: B256 = safe_tx.eip712_signing_hash(&domain);
+
+        // 4. Sign the hash.
+        let sig = alloy::signers::Signer::sign_hash(&self.signer, &signing_hash)
+            .await
+            .map_err(|e| CoreError::Adapter(format!("signing failed: {e}")))?;
+
+        // 5. Pack signature — adjust v per Safe convention.
+        // sig.v() returns bool (parity): true = 28, false = 27.
+        let (r, s) = (sig.r(), sig.s());
+        let v_raw = if sig.v() { 28u8 } else { 27u8 };
+        let packed_v = match v_raw {
+            27 | 28 => v_raw + 4,
+            v => v,
+        };
+        let packed_sig = format!(
+            "0x{}{}{:02x}",
+            alloy_hex::encode(r.to_be_bytes::<32>()),
+            alloy_hex::encode(s.to_be_bytes::<32>()),
+            packed_v
+        );
+
+        // 6. POST to relayer.
+        let body = serde_json::json!({
+            "type":        "SAFE",
+            "from":        format!("{signer_address:#x}"),
+            "to":          COLLATERAL_ADAPTER,
+            "data":        format!("0x{}", alloy_hex::encode(&calldata)),
+            "nonce":       nonce_resp.nonce,
+            "proxyWallet": format!("{:#x}", self.safe_address),
+            "signature":   packed_sig,
+            "signatureParams": {
+                "baseGas":       "0",
+                "gasPrice":      "0",
+                "gasToken":      "0x0000000000000000000000000000000000000000",
+                "operation":     "0",
+                "refundReceiver":"0x0000000000000000000000000000000000000000",
+                "safeTxnGas":    "0"
+            }
+        });
+
+        let resp: RelayerSubmitResponse = self
+            .http
+            .post(format!("{RELAYER_URL}/submit"))
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| CoreError::Adapter(format!("relayer submit request failed: {e}")))?
+            .error_for_status()
+            .map_err(|e| CoreError::Adapter(format!("relayer submit rejected: {e}")))?
+            .json()
+            .await
+            .map_err(|e| CoreError::Adapter(format!("relayer submit response parse failed: {e}")))?;
+
+        tracing::info!(
+            state = %resp.state,
+            transaction_id = ?resp.transaction_id,
+            "redeemPositions submitted to relayer"
+        );
+
+        // 7. Return gross payout: 1 USDC per winning share.
+        Ok(Usdc(position.shares.0))
     }
 }

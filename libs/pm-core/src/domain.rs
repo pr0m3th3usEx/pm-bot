@@ -95,6 +95,7 @@ pub struct PositionRecord {
     pub side: Side,
     pub outcome_name: String, // free text — matches market vocabulary
     pub token_id: TokenId,
+    pub condition_id: FixedBytes<32>,
     pub order_id: Option<String>,
     pub shares: Shares,
     pub limit_price: Price,

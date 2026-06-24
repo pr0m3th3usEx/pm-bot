@@ -231,7 +231,6 @@ fn todo_client() -> impl pm_core::ports::MarketClient {
             &self,
             _token_id: &pm_core::types::TokenId,
             _side: pm_core::types::Side,
-            _shares: Shares,
         ) -> pm_core::error::Result<pm_core::types::Price> {
             todo!()
         }
@@ -248,6 +247,7 @@ fn todo_client() -> impl pm_core::ports::MarketClient {
         async fn order_status(
             &self,
             _order_id: &str,
+            _position_id: i64,
         ) -> pm_core::error::Result<pm_core::domain::OrderUpdate> {
             todo!()
         }
@@ -255,9 +255,6 @@ fn todo_client() -> impl pm_core::ports::MarketClient {
             &self,
             _position: &pm_core::domain::PositionRecord,
         ) -> pm_core::error::Result<pm_core::types::Usdc> {
-            todo!()
-        }
-        async fn heartbeat(&self) -> pm_core::error::Result<()> {
             todo!()
         }
     }
