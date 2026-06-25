@@ -12,7 +12,7 @@ pub enum RoundSlotState {
     /// Order submitted, awaiting fill (retryable on reject/cancel).
     Pending { position_id: i64 },
     /// Order filled; slot locked until next rotation.
-    Filled  { position_id: i64 },
+    Filled { position_id: i64 },
 }
 
 impl RoundSlotState {
@@ -20,9 +20,9 @@ impl RoundSlotState {
     pub fn claim(self, position_id: i64) -> Result<Self> {
         match self {
             Self::Empty => Ok(Self::Pending { position_id }),
-            other => Err(CoreError::IllegalTransition(
-                format!("cannot claim from {other:?}")
-            )),
+            other => Err(CoreError::IllegalTransition(format!(
+                "cannot claim from {other:?}"
+            ))),
         }
     }
 
@@ -30,9 +30,9 @@ impl RoundSlotState {
     pub fn fill(self) -> Result<Self> {
         match self {
             Self::Pending { position_id } => Ok(Self::Filled { position_id }),
-            other => Err(CoreError::IllegalTransition(
-                format!("cannot fill from {other:?}")
-            )),
+            other => Err(CoreError::IllegalTransition(format!(
+                "cannot fill from {other:?}"
+            ))),
         }
     }
 
@@ -40,9 +40,9 @@ impl RoundSlotState {
     pub fn free(self) -> Result<Self> {
         match self {
             Self::Pending { .. } => Ok(Self::Empty),
-            other => Err(CoreError::IllegalTransition(
-                format!("cannot free from {other:?}")
-            )),
+            other => Err(CoreError::IllegalTransition(format!(
+                "cannot free from {other:?}"
+            ))),
         }
     }
 
@@ -51,7 +51,9 @@ impl RoundSlotState {
         Self::Empty
     }
 
-    pub fn is_empty(self) -> bool { matches!(self, Self::Empty) }
+    pub fn is_empty(self) -> bool {
+        matches!(self, Self::Empty)
+    }
 }
 
 // ─── 2. Market round status ───────────────────────────────────────────────────
@@ -62,7 +64,9 @@ impl RoundSlotState {
 pub struct MarketState(pub MarketStatus);
 
 impl MarketState {
-    pub fn new() -> Self { Self(MarketStatus::Pending) }
+    pub fn new() -> Self {
+        Self(MarketStatus::Pending)
+    }
 
     pub fn transition(self, next: MarketStatus) -> Result<Self> {
         use MarketStatus::*;
@@ -85,11 +89,15 @@ impl MarketState {
         }
     }
 
-    pub fn status(self) -> MarketStatus { self.0 }
+    pub fn status(self) -> MarketStatus {
+        self.0
+    }
 }
 
 impl Default for MarketState {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 // ─── 3. Position lifecycle ────────────────────────────────────────────────────
@@ -101,7 +109,9 @@ use crate::types::PositionStatus;
 pub struct PositionState(pub PositionStatus);
 
 impl PositionState {
-    pub fn new() -> Self { Self(PositionStatus::Submitted) }
+    pub fn new() -> Self {
+        Self(PositionStatus::Submitted)
+    }
 
     pub fn transition(self, next: PositionStatus) -> Result<Self> {
         use PositionStatus::*;
@@ -126,7 +136,9 @@ impl PositionState {
 }
 
 impl Default for PositionState {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[cfg(test)]

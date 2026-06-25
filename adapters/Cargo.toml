@@ -7,7 +7,7 @@ license.workspace = true
 
 [dependencies]
 pm-core             = { path = "../libs/pm-core" }
-polymarket_client_sdk_v2 = { version = "0.5.1", features = ["clob", "gamma", "data"] }
+polymarket_client_sdk_v2 = { version = "0.5.1", features = ["clob", "gamma", "data", "heartbeats", "rtds"] }
 rusqlite.workspace  = true
 tokio.workspace     = true
 tokio-util.workspace = true
@@ -17,7 +17,11 @@ thiserror.workspace = true
 serde.workspace     = true
 serde_json.workspace = true
 rust_decimal.workspace = true
+alloy.workspace     = true
 anyhow.workspace    = true
+reqwest             = { version = "0.12", features = ["json"] }
+chrono              = { version = "0.4", features = ["serde"] }
+futures = "0.3.32"
 
 [dev-dependencies]
 rust_decimal_macros = "1"

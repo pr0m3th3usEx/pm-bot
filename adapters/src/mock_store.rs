@@ -19,13 +19,18 @@ struct MockStoreInner {
 }
 
 impl MockStore {
-    pub fn new() -> Arc<Self> { Arc::new(Self::default()) }
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self::default())
+    }
 }
 
 #[async_trait]
 impl Store for MockStore {
     async fn insert_position(&self, record: &PositionRecord) -> Result<i64> {
-        let mut inner = self.inner.lock().map_err(|e| CoreError::Store(e.to_string()))?;
+        let mut inner = self
+            .inner
+            .lock()
+            .map_err(|e| CoreError::Store(e.to_string()))?;
         inner.next_id += 1;
         let id = inner.next_id;
         let mut rec = record.clone();
@@ -35,8 +40,13 @@ impl Store for MockStore {
     }
 
     async fn update_position(&self, id: i64, update: &PositionUpdate) -> Result<()> {
-        let mut inner = self.inner.lock().map_err(|e| CoreError::Store(e.to_string()))?;
-        let rec = inner.positions.iter_mut()
+        let mut inner = self
+            .inner
+            .lock()
+            .map_err(|e| CoreError::Store(e.to_string()))?;
+        let rec = inner
+            .positions
+            .iter_mut()
             .find(|r| r.id == Some(id))
             .ok_or_else(|| CoreError::Store(format!("position {id} not found")))?;
         let now = Timestamp::now_ms();
@@ -48,9 +58,9 @@ impl Store for MockStore {
                 rec.avg_price = Some(avg_price.clone());
                 rec.status = PositionStatus::Filled;
             }
-            PositionUpdate::Rejected { .. }  => rec.status = PositionStatus::Rejected,
+            PositionUpdate::Rejected { .. } => rec.status = PositionStatus::Rejected,
             PositionUpdate::Cancelled { .. } => rec.status = PositionStatus::Cancelled,
-            PositionUpdate::Settling { .. }  => rec.status = PositionStatus::Settling,
+            PositionUpdate::Settling { .. } => rec.status = PositionStatus::Settling,
             PositionUpdate::Won { realized_pnl, .. } => {
                 rec.status = PositionStatus::Won;
                 rec.realized_pnl = Some(realized_pnl.clone());
@@ -65,17 +75,33 @@ impl Store for MockStore {
     }
 
     async fn open_positions(&self) -> Result<Vec<PositionRecord>> {
-        let inner = self.inner.lock().map_err(|e| CoreError::Store(e.to_string()))?;
-        Ok(inner.positions.iter()
+        let inner = self
+            .inner
+            .lock()
+            .map_err(|e| CoreError::Store(e.to_string()))?;
+        Ok(inner
+            .positions
+            .iter()
             .filter(|r| !r.status.is_terminal())
             .cloned()
             .collect())
     }
 
     async fn success_rate_counts(&self) -> Result<(u64, u64)> {
-        let inner = self.inner.lock().map_err(|e| CoreError::Store(e.to_string()))?;
-        let wins = inner.positions.iter().filter(|r| r.status == PositionStatus::Won).count() as u64;
-        let resolved = inner.positions.iter().filter(|r| r.status.is_resolved()).count() as u64;
+        let inner = self
+            .inner
+            .lock()
+            .map_err(|e| CoreError::Store(e.to_string()))?;
+        let wins = inner
+            .positions
+            .iter()
+            .filter(|r| r.status == PositionStatus::Won)
+            .count() as u64;
+        let resolved = inner
+            .positions
+            .iter()
+            .filter(|r| r.status.is_resolved())
+            .count() as u64;
         Ok((wins, resolved))
     }
 }

@@ -1,25 +1,31 @@
-use crate::types::{MarketSlug, MarketStatus, Outcome, PositionStatus, Price, Shares, Side, Timestamp, TokenId, Usdc};
+use crate::types::{
+    MarketSlug, MarketStatus, MarketType, Outcome, PositionStatus, Price, Shares, Side, Timestamp,
+    TokenId, Usdc,
+};
+use alloy::primitives::FixedBytes;
 use serde::{Deserialize, Serialize};
 
 /// A single tradeable outcome within a market.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MarketOutcome {
-    pub name: String,       // e.g. "up", "down", "yes"
-    pub token_id: TokenId,  // opaque CLOB id, rotates every round
+    pub name: String,      // e.g. "up", "down", "yes"
+    pub token_id: TokenId, // opaque CLOB id, rotates every round
 }
 
 /// The fully-resolved instrument returned by MarketCatalog::resolve.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Market {
     pub slug: MarketSlug,
+    pub market_type: MarketType,
     pub event_id: String,
-    pub condition_id: String,
+    pub question_id: FixedBytes<32>,
+    pub condition_id: FixedBytes<32>,
     pub outcomes: Vec<MarketOutcome>,
-    // TODO(confirm): is strike the BTC price at window-open (live from feed) or
-    // a field the Gamma API returns? If live from feed, remove this field and
-    // pass price-vs-reference into StrategyContext directly.
+    /// Price to beat. For UpDown markets: the closePrice of the previous round
+    /// from the Polymarket past-results API. None while still Pending.
     pub strike: Option<Price>,
     pub opens_at: Timestamp,
+    /// Same as resolves_at — Polymarket closes the book at resolution time.
     pub closes_at: Timestamp,
     pub resolves_at: Timestamp,
     pub status: MarketStatus,
@@ -50,10 +56,25 @@ pub struct Intent {
 /// Order lifecycle events from the CLOB / order-status poller.
 #[derive(Debug, Clone)]
 pub enum OrderUpdate {
-    Submitted { order_id: String, position_id: i64 },
-    Filled    { order_id: String, position_id: i64, avg_price: Price, size_matched: Shares },
-    Rejected  { order_id: String, position_id: i64, reason: Option<String> },
-    Cancelled { order_id: String, position_id: i64 },
+    Submitted {
+        order_id: String,
+        position_id: i64,
+    },
+    Filled {
+        order_id: String,
+        position_id: i64,
+        avg_price: Price,
+        size_matched: Shares,
+    },
+    Rejected {
+        order_id: String,
+        position_id: i64,
+        reason: Option<String>,
+    },
+    Cancelled {
+        order_id: String,
+        position_id: i64,
+    },
 }
 
 /// Emitted by the settlement task after a position resolves.
@@ -72,8 +93,9 @@ pub struct PositionRecord {
     pub id: Option<i64>,
     pub market_slug: MarketSlug,
     pub side: Side,
-    pub outcome_name: String,  // free text — matches market vocabulary
+    pub outcome_name: String, // free text — matches market vocabulary
     pub token_id: TokenId,
+    pub condition_id: FixedBytes<32>,
     pub order_id: Option<String>,
     pub shares: Shares,
     pub limit_price: Price,
@@ -88,11 +110,30 @@ pub struct PositionRecord {
 /// Partial update applied to an existing row.
 #[derive(Debug, Clone)]
 pub enum PositionUpdate {
-    Submitted { order_id: String, updated_at: Timestamp },
-    Filled    { avg_price: Price, size_matched: Shares, updated_at: Timestamp },
-    Rejected  { updated_at: Timestamp },
-    Cancelled { updated_at: Timestamp },
-    Settling  { updated_at: Timestamp },
-    Won       { realized_pnl: Usdc, updated_at: Timestamp },
-    Lost      { realized_pnl: Usdc, updated_at: Timestamp },
+    Submitted {
+        order_id: String,
+        updated_at: Timestamp,
+    },
+    Filled {
+        avg_price: Price,
+        size_matched: Shares,
+        updated_at: Timestamp,
+    },
+    Rejected {
+        updated_at: Timestamp,
+    },
+    Cancelled {
+        updated_at: Timestamp,
+    },
+    Settling {
+        updated_at: Timestamp,
+    },
+    Won {
+        realized_pnl: Usdc,
+        updated_at: Timestamp,
+    },
+    Lost {
+        realized_pnl: Usdc,
+        updated_at: Timestamp,
+    },
 }

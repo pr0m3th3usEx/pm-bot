@@ -25,7 +25,7 @@ logs/
 
 # Gen files
 gen/
-
+ts-sdk
 
 # Node
 node_modules/

@@ -1,10 +1,16 @@
+use alloy::hex::FromHex as _;
+use alloy::primitives::hex as alloy_hex;
+use alloy::primitives::FixedBytes;
 use async_trait::async_trait;
 use pm_core::{
     domain::{PositionRecord, PositionUpdate},
     error::{CoreError, Result},
     ports::Store,
+    types::{MarketSlug, PositionStatus, Price, Shares, Side, Timestamp, TokenId, Usdc},
 };
+use polymarket_client_sdk_v2::types::U256;
 use rusqlite::{params, Connection};
+use std::str::FromStr;
 use std::sync::Mutex;
 
 pub struct SqliteStore {
@@ -18,6 +24,7 @@ CREATE TABLE IF NOT EXISTS positions (
     side         TEXT    NOT NULL CHECK(side IN ('buy','sell')),
     outcome_name TEXT    NOT NULL,
     token_id     TEXT    NOT NULL,
+    condition_id TEXT    NOT NULL,
     order_id     TEXT,
     shares       TEXT    NOT NULL,
     limit_price  TEXT    NOT NULL,
@@ -37,7 +44,9 @@ impl SqliteStore {
     pub fn open(path: &str) -> anyhow::Result<Self> {
         let conn = Connection::open(path)?;
         conn.execute_batch(DDL)?;
-        Ok(Self { conn: Mutex::new(conn) })
+        Ok(Self {
+            conn: Mutex::new(conn),
+        })
     }
 
     pub fn open_in_memory() -> anyhow::Result<Self> {
@@ -46,27 +55,34 @@ impl SqliteStore {
 }
 
 // Helper: serialize Decimal as TEXT
-fn dec_to_text(d: &rust_decimal::Decimal) -> String { d.to_string() }
+fn dec_to_text(d: &rust_decimal::Decimal) -> String {
+    d.to_string()
+}
 
 #[allow(dead_code)]
 fn text_to_dec(s: &str) -> Result<rust_decimal::Decimal> {
-    s.parse().map_err(|e| CoreError::Store(format!("bad decimal '{s}': {e}")))
+    s.parse()
+        .map_err(|e| CoreError::Store(format!("bad decimal '{s}': {e}")))
 }
 
 #[async_trait]
 impl Store for SqliteStore {
     async fn insert_position(&self, rec: &PositionRecord) -> Result<i64> {
-        let conn = self.conn.lock().map_err(|e| CoreError::Store(e.to_string()))?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| CoreError::Store(e.to_string()))?;
         conn.execute(
             "INSERT INTO positions
-             (market_slug, side, outcome_name, token_id, order_id, shares, limit_price,
-              avg_price, strike, status, realized_pnl, submitted_at, updated_at)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)",
+             (market_slug, side, outcome_name, token_id, condition_id, order_id, shares,
+              limit_price, avg_price, strike, status, realized_pnl, submitted_at, updated_at)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)",
             params![
                 rec.market_slug.0,
                 rec.side.as_str(),
                 rec.outcome_name,
-                rec.token_id.0,
+                rec.token_id.0.to_string(),
+                alloy_hex::encode_prefixed(rec.condition_id),
                 rec.order_id.as_deref(),
                 dec_to_text(&rec.shares.0),
                 dec_to_text(&rec.limit_price.0),
@@ -77,76 +93,154 @@ impl Store for SqliteStore {
                 rec.submitted_at.0,
                 rec.updated_at.0,
             ],
-        ).map_err(|e| CoreError::Store(e.to_string()))?;
+        )
+        .map_err(|e| CoreError::Store(e.to_string()))?;
         Ok(conn.last_insert_rowid())
     }
 
     async fn update_position(&self, id: i64, update: &PositionUpdate) -> Result<()> {
-        let conn = self.conn.lock().map_err(|e| CoreError::Store(e.to_string()))?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| CoreError::Store(e.to_string()))?;
         match update {
-            PositionUpdate::Submitted { order_id, updated_at } => {
-                conn.execute(
-                    "UPDATE positions SET order_id=?1, status='submitted', updated_at=?2 WHERE id=?3",
-                    params![order_id, updated_at.0, id],
-                )
-            }
-            PositionUpdate::Filled { avg_price, size_matched: _, updated_at } => {
-                conn.execute(
-                    "UPDATE positions SET avg_price=?1, status='filled', updated_at=?2 WHERE id=?3",
-                    params![dec_to_text(&avg_price.0), updated_at.0, id],
-                )
-            }
-            PositionUpdate::Rejected { updated_at } => {
-                conn.execute(
-                    "UPDATE positions SET status='rejected', updated_at=?1 WHERE id=?2",
-                    params![updated_at.0, id],
-                )
-            }
-            PositionUpdate::Cancelled { updated_at } => {
-                conn.execute(
-                    "UPDATE positions SET status='cancelled', updated_at=?1 WHERE id=?2",
-                    params![updated_at.0, id],
-                )
-            }
-            PositionUpdate::Settling { updated_at } => {
-                conn.execute(
-                    "UPDATE positions SET status='settling', updated_at=?1 WHERE id=?2",
-                    params![updated_at.0, id],
-                )
-            }
-            PositionUpdate::Won { realized_pnl, updated_at } => {
-                conn.execute(
-                    "UPDATE positions SET status='won', realized_pnl=?1, updated_at=?2 WHERE id=?3",
-                    params![dec_to_text(&realized_pnl.0), updated_at.0, id],
-                )
-            }
-            PositionUpdate::Lost { realized_pnl, updated_at } => {
-                conn.execute(
-                    "UPDATE positions SET status='lost', realized_pnl=?1, updated_at=?2 WHERE id=?3",
-                    params![dec_to_text(&realized_pnl.0), updated_at.0, id],
-                )
-            }
-        }.map_err(|e| CoreError::Store(e.to_string()))?;
+            PositionUpdate::Submitted {
+                order_id,
+                updated_at,
+            } => conn.execute(
+                "UPDATE positions SET order_id=?1, status='submitted', updated_at=?2 WHERE id=?3",
+                params![order_id, updated_at.0, id],
+            ),
+            PositionUpdate::Filled {
+                avg_price,
+                size_matched: _,
+                updated_at,
+            } => conn.execute(
+                "UPDATE positions SET avg_price=?1, status='filled', updated_at=?2 WHERE id=?3",
+                params![dec_to_text(&avg_price.0), updated_at.0, id],
+            ),
+            PositionUpdate::Rejected { updated_at } => conn.execute(
+                "UPDATE positions SET status='rejected', updated_at=?1 WHERE id=?2",
+                params![updated_at.0, id],
+            ),
+            PositionUpdate::Cancelled { updated_at } => conn.execute(
+                "UPDATE positions SET status='cancelled', updated_at=?1 WHERE id=?2",
+                params![updated_at.0, id],
+            ),
+            PositionUpdate::Settling { updated_at } => conn.execute(
+                "UPDATE positions SET status='settling', updated_at=?1 WHERE id=?2",
+                params![updated_at.0, id],
+            ),
+            PositionUpdate::Won {
+                realized_pnl,
+                updated_at,
+            } => conn.execute(
+                "UPDATE positions SET status='won', realized_pnl=?1, updated_at=?2 WHERE id=?3",
+                params![dec_to_text(&realized_pnl.0), updated_at.0, id],
+            ),
+            PositionUpdate::Lost {
+                realized_pnl,
+                updated_at,
+            } => conn.execute(
+                "UPDATE positions SET status='lost', realized_pnl=?1, updated_at=?2 WHERE id=?3",
+                params![dec_to_text(&realized_pnl.0), updated_at.0, id],
+            ),
+        }
+        .map_err(|e| CoreError::Store(e.to_string()))?;
         Ok(())
     }
 
     async fn open_positions(&self) -> Result<Vec<PositionRecord>> {
-        todo!("query positions WHERE status NOT IN ('won','lost','rejected','cancelled')")
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| CoreError::Store(e.to_string()))?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, market_slug, side, outcome_name, token_id, condition_id,
+                        order_id, shares, limit_price, avg_price, strike,
+                        status, realized_pnl, submitted_at, updated_at
+                 FROM positions
+                 WHERE status NOT IN ('won','lost','rejected','cancelled')",
+            )
+            .map_err(|e| CoreError::Store(e.to_string()))?;
+
+        let records = stmt
+            .query_map([], |row| {
+                let condition_hex: String = row.get(5)?;
+                let condition_id = FixedBytes::<32>::from_hex(&condition_hex).map_err(|e| {
+                    rusqlite::Error::InvalidParameterName(format!("bad condition_id hex: {e}"))
+                })?;
+                let token_str: String = row.get(4)?;
+                let token_id = U256::from_str(&token_str).map_err(|e| {
+                    rusqlite::Error::InvalidParameterName(format!("bad token_id: {e}"))
+                })?;
+                let side = Side::from_str(&row.get::<_, String>(2)?)
+                    .map_err(|e| rusqlite::Error::InvalidParameterName(format!("bad side: {e}")))?;
+                let status = PositionStatus::from_str(&row.get::<_, String>(11)?).map_err(|e| {
+                    rusqlite::Error::InvalidParameterName(format!("bad status: {e}"))
+                })?;
+
+                let parse_dec = |s: &str| {
+                    s.parse::<rust_decimal::Decimal>().map_err(|e| {
+                        rusqlite::Error::InvalidParameterName(format!("bad decimal: {e}"))
+                    })
+                };
+
+                Ok(PositionRecord {
+                    id: Some(row.get(0)?),
+                    market_slug: MarketSlug(row.get(1)?),
+                    side,
+                    outcome_name: row.get(3)?,
+                    token_id: TokenId(token_id),
+                    condition_id,
+                    order_id: row.get(6)?,
+                    shares: Shares(parse_dec(&row.get::<_, String>(7)?)?),
+                    limit_price: Price(parse_dec(&row.get::<_, String>(8)?)?),
+                    avg_price: row
+                        .get::<_, Option<String>>(9)?
+                        .map(|s| parse_dec(&s).map(Price))
+                        .transpose()?,
+                    strike: row
+                        .get::<_, Option<String>>(10)?
+                        .map(|s| parse_dec(&s).map(Price))
+                        .transpose()?,
+                    status,
+                    realized_pnl: row
+                        .get::<_, Option<String>>(12)?
+                        .map(|s| parse_dec(&s).map(Usdc))
+                        .transpose()?,
+                    submitted_at: Timestamp(row.get(13)?),
+                    updated_at: Timestamp(row.get(14)?),
+                })
+            })
+            .map_err(|e| CoreError::Store(e.to_string()))?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(|e| CoreError::Store(e.to_string()))?;
+
+        Ok(records)
     }
 
     async fn success_rate_counts(&self) -> Result<(u64, u64)> {
-        let conn = self.conn.lock().map_err(|e| CoreError::Store(e.to_string()))?;
-        let (wins, resolved): (u64, u64) = conn.query_row(
-            "SELECT
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| CoreError::Store(e.to_string()))?;
+        let (wins, resolved): (u64, u64) = conn
+            .query_row(
+                "SELECT
                  CAST(SUM(CASE WHEN status='won' THEN 1 ELSE 0 END) AS INTEGER),
                  CAST(SUM(CASE WHEN status IN ('won','lost') THEN 1 ELSE 0 END) AS INTEGER)
              FROM positions",
-            [],
-            |row| Ok((
-                row.get::<_, i64>(0).map(|v| v as u64).unwrap_or(0),
-                row.get::<_, i64>(1).map(|v| v as u64).unwrap_or(0),
-            )),
-        ).map_err(|e| CoreError::Store(e.to_string()))?;
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0).map(|v| v as u64).unwrap_or(0),
+                        row.get::<_, i64>(1).map(|v| v as u64).unwrap_or(0),
+                    ))
+                },
+            )
+            .map_err(|e| CoreError::Store(e.to_string()))?;
         Ok((wins, resolved))
     }
 }
@@ -156,7 +250,7 @@ impl Store for SqliteStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pm_core::types::{MarketSlug, Price, PositionStatus, Shares, Side, Timestamp, TokenId, Usdc};
+    use alloy::primitives::FixedBytes;
     use rust_decimal_macros::dec;
 
     fn sample_record() -> PositionRecord {
@@ -165,7 +259,8 @@ mod tests {
             market_slug: MarketSlug("btc-updown-5m-1000".into()),
             side: Side::Buy,
             outcome_name: "up".into(),
-            token_id: TokenId("tok1".into()),
+            token_id: TokenId(U256::from(1u64)),
+            condition_id: FixedBytes::from([1u8; 32]),
             order_id: None,
             shares: Shares(dec!(5)),
             limit_price: Price(dec!(0.55)),
@@ -190,10 +285,16 @@ mod tests {
         assert_eq!((wins, resolved), (0, 0));
 
         // Mark won
-        store.update_position(id, &PositionUpdate::Won {
-            realized_pnl: Usdc(dec!(4.5)),
-            updated_at: Timestamp(2_000_000),
-        }).await.unwrap();
+        store
+            .update_position(
+                id,
+                &PositionUpdate::Won {
+                    realized_pnl: Usdc(dec!(4.5)),
+                    updated_at: Timestamp(2_000_000),
+                },
+            )
+            .await
+            .unwrap();
 
         let (wins, resolved) = store.success_rate_counts().await.unwrap();
         assert_eq!((wins, resolved), (1, 1));
@@ -209,7 +310,9 @@ mod tests {
         for status in [PositionStatus::Submitted] {
             let mut rec = sample_record();
             rec.status = status;
-            store.insert_position(&rec).await
+            store
+                .insert_position(&rec)
+                .await
                 .expect(&format!("INSERT failed for status {:?}", status));
         }
 
@@ -217,7 +320,9 @@ mod tests {
         for side in [Side::Buy, Side::Sell] {
             let mut rec = sample_record();
             rec.side = side;
-            store.insert_position(&rec).await
+            store
+                .insert_position(&rec)
+                .await
                 .expect(&format!("INSERT failed for side {:?}", side));
         }
     }

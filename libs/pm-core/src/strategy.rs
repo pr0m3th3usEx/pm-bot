@@ -1,6 +1,6 @@
-use crate::types::{Outcome, Price, Timestamp};
 use crate::domain::Market;
 use crate::ports::Strategy;
+use crate::types::{Outcome, Price, Timestamp};
 use rust_decimal::Decimal;
 
 /// All inputs the strategy needs to decide hold-or-enter on a single tick.
@@ -8,9 +8,7 @@ use rust_decimal::Decimal;
 pub struct StrategyContext<'a> {
     /// Latest BTC tick price.
     pub price: Price,
-    // TODO(confirm): if strike comes from the live feed at window-open rather than
-    // from Gamma, this field stays here but `market.strike` would be None. The
-    // strategy still receives it — source doesn't change the trait.
+    /// Price to beat, sourced from Gamma API Market Event data via Market.strike.
     pub strike: Price,
     pub now: Timestamp,
     /// Trading cutoff: order must submit before this.
@@ -47,7 +45,10 @@ pub struct V1BasicStrategy {
 
 impl V1BasicStrategy {
     pub fn new(entry_window_secs: i64, margin: Decimal) -> Self {
-        Self { entry_window_secs, margin }
+        Self {
+            entry_window_secs,
+            margin,
+        }
     }
 }
 
@@ -79,18 +80,35 @@ impl Strategy for V1BasicStrategy {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rust_decimal_macros::dec;
-    use crate::types::{MarketSlug, MarketStatus, TokenId};
     use crate::domain::{Market, MarketOutcome};
+    use crate::types::{MarketSlug, MarketStatus, MarketType, TokenId};
+    use alloy::hex::FromHex;
+    use alloy::primitives::FixedBytes;
+    use polymarket_client_sdk_v2::types::U256;
+    use rust_decimal_macros::dec;
 
     fn dummy_market() -> Market {
         Market {
             slug: MarketSlug("btc-updown-5m-1000".into()),
+            market_type: MarketType::UpDown,
             event_id: "e1".into(),
-            condition_id: "c1".into(),
+            question_id: FixedBytes::from_hex(
+                "0x0000000000000000000000000000000000000000000000000000000000000001",
+            )
+            .unwrap(),
+            condition_id: FixedBytes::from_hex(
+                "0x0000000000000000000000000000000000000000000000000000000000000001",
+            )
+            .unwrap(),
             outcomes: vec![
-                MarketOutcome { name: "up".into(), token_id: TokenId("t1".into()) },
-                MarketOutcome { name: "down".into(), token_id: TokenId("t2".into()) },
+                MarketOutcome {
+                    name: "up".into(),
+                    token_id: TokenId(U256::from(1u64)),
+                },
+                MarketOutcome {
+                    name: "down".into(),
+                    token_id: TokenId(U256::from(2u64)),
+                },
             ],
             strike: None,
             opens_at: Timestamp(0),
@@ -107,12 +125,17 @@ mod tests {
         let ctx = StrategyContext {
             price: Price(dec!(0.60)),
             strike: Price(dec!(0.55)),
-            now: Timestamp::from_secs(900),     // 100 s before closes_at 1000
+            now: Timestamp::from_secs(900), // 100 s before closes_at 1000
             closes_at: Timestamp::from_secs(1000),
             resolves_at: Timestamp::from_secs(1300),
             market: &market,
         };
-        assert_eq!(s.evaluate(&ctx), StrategyDecision::Enter { outcome: Outcome::Up });
+        assert_eq!(
+            s.evaluate(&ctx),
+            StrategyDecision::Enter {
+                outcome: Outcome::Up
+            }
+        );
     }
 
     #[test]
@@ -122,7 +145,7 @@ mod tests {
         let ctx = StrategyContext {
             price: Price(dec!(0.60)),
             strike: Price(dec!(0.55)),
-            now: Timestamp::from_secs(700),     // 300 s before cutoff — outside 120 s window
+            now: Timestamp::from_secs(700), // 300 s before cutoff — outside 120 s window
             closes_at: Timestamp::from_secs(1000),
             resolves_at: Timestamp::from_secs(1300),
             market: &market,
@@ -136,7 +159,7 @@ mod tests {
         let market = dummy_market();
         let ctx = StrategyContext {
             price: Price(dec!(0.57)),
-            strike: Price(dec!(0.55)),  // diff = 0.02 < margin 0.05
+            strike: Price(dec!(0.55)), // diff = 0.02 < margin 0.05
             now: Timestamp::from_secs(900),
             closes_at: Timestamp::from_secs(1000),
             resolves_at: Timestamp::from_secs(1300),
@@ -157,6 +180,11 @@ mod tests {
             resolves_at: Timestamp::from_secs(1300),
             market: &market,
         };
-        assert_eq!(s.evaluate(&ctx), StrategyDecision::Enter { outcome: Outcome::Down });
+        assert_eq!(
+            s.evaluate(&ctx),
+            StrategyDecision::Enter {
+                outcome: Outcome::Down
+            }
+        );
     }
 }
