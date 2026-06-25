@@ -62,7 +62,7 @@ struct RelayerSubmitResponse {
 pub struct ClobMarketClient<K, Sgn>
 where
     K: Kind + Send + Sync,
-    Sgn: PmSigner + alloy::signers::Signer + Send + Sync,
+    Sgn: PmSigner + Send + Sync,
 {
     client: ClobClient<Authenticated<K>>,
     signer: Sgn,
@@ -73,7 +73,7 @@ where
 impl<K, Sgn> ClobMarketClient<K, Sgn>
 where
     K: Kind + Send + Sync,
-    Sgn: PmSigner + alloy::signers::Signer + Send + Sync,
+    Sgn: PmSigner + Send + Sync,
 {
     pub fn new(client: ClobClient<Authenticated<K>>, signer: Sgn, safe_address: Address) -> Self {
         Self {
@@ -89,7 +89,7 @@ where
 impl<K, Sgn> MarketClient for ClobMarketClient<K, Sgn>
 where
     K: Kind + Send + Sync,
-    Sgn: PmSigner + alloy::signers::Signer + Send + Sync,
+    Sgn: PmSigner + Send + Sync,
 {
     async fn quote(&self, token_id: &TokenId, side: Side) -> Result<Price> {
         let request = PriceRequest::builder()
@@ -192,7 +192,7 @@ where
         }
         .abi_encode();
 
-        let signer_address = alloy::signers::Signer::address(&self.signer);
+        let signer_address = PmSigner::address(&self.signer);
 
         // 2. GET nonce from relayer.
         let nonce_resp: RelayerNonceResponse = self
@@ -236,7 +236,7 @@ where
         let signing_hash: B256 = safe_tx.eip712_signing_hash(&domain);
 
         // 4. Sign the hash.
-        let sig = alloy::signers::Signer::sign_hash(&self.signer, &signing_hash)
+        let sig = PmSigner::sign_hash(&self.signer, &signing_hash)
             .await
             .map_err(|e| CoreError::Adapter(format!("signing failed: {e}")))?;
 
@@ -305,5 +305,132 @@ where
             .await
             .map_err(|e| CoreError::Adapter(format!("CLOB heartbeat failed: {e}")))?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ClobMarketClient;
+    use pm_core::{
+        domain::OrderUpdate,
+        ports::MarketClient,
+        types::{Side, TokenId},
+    };
+    use polymarket_client_sdk_v2::{
+        auth::{LocalSigner, Signer as _},
+        clob::{types::SignatureType, Client as ClobClient, Config},
+        derive_safe_wallet,
+        types::U256,
+        POLYGON,
+    };
+    use std::str::FromStr;
+
+    async fn build_client() -> Option<Box<dyn MarketClient>> {
+        let Ok(raw_key) = std::env::var("POLYGON_PRIVATE_KEY") else {
+            println!("[SKIP] POLYGON_PRIVATE_KEY not set");
+            return None;
+        };
+        let signer = LocalSigner::from_str(&raw_key)
+            .expect("invalid POLYGON_PRIVATE_KEY")
+            .with_chain_id(Some(POLYGON));
+        let clob = ClobClient::new("https://clob.polymarket.com", Config::default())
+            .expect("failed to build ClobClient")
+            .authentication_builder(&signer)
+            .signature_type(SignatureType::GnosisSafe)
+            .authenticate()
+            .await
+            .expect("CLOB authentication failed");
+        let safe = derive_safe_wallet(clob.address(), POLYGON)
+            .expect("failed to derive safe wallet address");
+        Some(Box::new(ClobMarketClient::new(clob, signer, safe)))
+    }
+
+    #[tokio::test]
+    async fn heartbeat_succeeds() {
+        let Some(client) = build_client().await else {
+            return;
+        };
+        client.heartbeat().await.expect("heartbeat failed");
+    }
+
+    #[tokio::test]
+    async fn quote_buy_side_returns_valid_price() {
+        let Some(client) = build_client().await else {
+            return;
+        };
+        let Ok(raw_id) = std::env::var("POLYMARKET_TOKEN_ID") else {
+            println!("[SKIP] POLYMARKET_TOKEN_ID not set");
+            return;
+        };
+        let token_id = TokenId(U256::from_str(&raw_id).expect("invalid POLYMARKET_TOKEN_ID"));
+        let price = client
+            .quote(&token_id, Side::Buy)
+            .await
+            .expect("quote(Buy) failed");
+        assert!(
+            price.0 > rust_decimal::Decimal::ZERO,
+            "price must be > 0, got {:?}",
+            price
+        );
+        assert!(
+            price.0 <= rust_decimal::Decimal::ONE,
+            "price must be <= 1, got {:?}",
+            price
+        );
+    }
+
+    #[tokio::test]
+    async fn quote_sell_side_returns_valid_price() {
+        let Some(client) = build_client().await else {
+            return;
+        };
+        let Ok(raw_id) = std::env::var("POLYMARKET_TOKEN_ID") else {
+            println!("[SKIP] POLYMARKET_TOKEN_ID not set");
+            return;
+        };
+        let token_id = TokenId(U256::from_str(&raw_id).expect("invalid POLYMARKET_TOKEN_ID"));
+        let price = client
+            .quote(&token_id, Side::Sell)
+            .await
+            .expect("quote(Sell) failed");
+        assert!(price.0 > rust_decimal::Decimal::ZERO);
+        assert!(price.0 <= rust_decimal::Decimal::ONE);
+    }
+
+    #[tokio::test]
+    async fn order_status_returns_known_update() {
+        let Some(client) = build_client().await else {
+            return;
+        };
+        let Ok(order_id) = std::env::var("POLYMARKET_ORDER_ID") else {
+            println!("[SKIP] POLYMARKET_ORDER_ID not set");
+            return;
+        };
+        let update = client
+            .order_status(&order_id, 0)
+            .await
+            .expect("order_status failed");
+        let (embedded_order_id, embedded_pos_id) = match &update {
+            OrderUpdate::Submitted {
+                order_id,
+                position_id,
+            } => (order_id, position_id),
+            OrderUpdate::Filled {
+                order_id,
+                position_id,
+                ..
+            } => (order_id, position_id),
+            OrderUpdate::Rejected {
+                order_id,
+                position_id,
+                ..
+            } => (order_id, position_id),
+            OrderUpdate::Cancelled {
+                order_id,
+                position_id,
+            } => (order_id, position_id),
+        };
+        assert_eq!(embedded_order_id, &order_id);
+        assert_eq!(*embedded_pos_id, 0i64);
     }
 }

@@ -58,3 +58,33 @@ impl PriceFeed for ChainlinkPriceFeed {
             .ok_or_else(|| CoreError::Adapter("Chainlink feed closed unexpectedly".to_owned()))?
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use pm_core::ports::PriceFeed;
+    use std::time::Duration;
+    use tokio::time::timeout;
+
+    #[tokio::test]
+    async fn receives_btc_usd_tick_within_timeout() {
+        let mut feed = super::ChainlinkPriceFeed::connect();
+
+        let result = timeout(Duration::from_secs(15), feed.next_tick())
+            .await
+            .expect("ChainlinkPriceFeed did not produce a tick within 15 seconds");
+
+        let tick = result.expect("next_tick returned an error");
+
+        assert!(
+            tick.price.0 > rust_decimal::Decimal::ZERO,
+            "tick price must be positive, got {:?}",
+            tick.price
+        );
+        // Chainlink RTDS delivers timestamps as Unix seconds; threshold is Nov 2023.
+        assert!(
+            tick.at.0 > 1_700_000_000,
+            "tick timestamp looks wrong: {:?}",
+            tick.at
+        );
+    }
+}
