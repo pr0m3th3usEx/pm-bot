@@ -186,13 +186,13 @@ async fn main() -> anyhow::Result<()> {
     //     cancel.clone(),
     // ));
 
-    // let h_poller = tokio::spawn(order_status_poller_task(
-    //     client.clone(),
-    //     store.clone(),
-    //     order_update_tx,
-    //     slot_rx,
-    //     cancel.clone(),
-    // ));
+    let h_poller = tokio::spawn(order_status_poller_task(
+        client.clone(),
+        store.clone(),
+        order_update_tx,
+        slot_rx,
+        cancel.clone(),
+    ));
 
     // let h_settlement = tokio::spawn(settlement_task(
     //     client.clone(),

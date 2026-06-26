@@ -78,7 +78,10 @@ async fn run_round(
         ..market
     };
     market_tx.send(Some(market.clone())).ok();
-    info!(market_slug = %slug, market = ?market, "market open");
+    info!(market_slug = %slug, status = ?state.status(), 
+        opens_at = ?market.opens_at, closes_at = ?market.closes_at, resolves_at = ?market.resolves_at,
+        status = ?state.status(),
+        strike = ?market.strike, "market open");
 
     // 3. Sleep until closes_at → TradingCutoff (clock-derived).
     let delay = delay_until_ms(market.closes_at.0);
