@@ -11,7 +11,7 @@ use polymarket_client_sdk_v2::gamma::{
     Client as GammaClient,
 };
 use polymarket_client_sdk_v2::types::{dec, Decimal};
-use polymarket_client_sdk_v2::{derive_proxy_wallet, derive_safe_wallet, POLYGON};
+use polymarket_client_sdk_v2::{derive_safe_wallet, POLYGON};
 use std::str::FromStr;
 
 // Generate the next 5m candle timestamp based on the current time

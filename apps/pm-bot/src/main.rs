@@ -7,9 +7,12 @@
 //!   5. sleep_until(next window) then begin trading
 //!   6. Ctrl-C → cancel token → join → exit
 
+use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
+use adapters::clob_market_client::{ClobMarketClient, CLOB_API_URL};
+use adapters::gamma_market_catalog::{GammaMarketCatalog, GAMMA_API_URL};
 use tokio::sync::{broadcast, mpsc, watch};
 use tokio_util::sync::CancellationToken;
 use tracing::info;
@@ -29,6 +32,12 @@ use pm_core::{
     },
     types::Shares,
 };
+
+use polymarket_client_sdk_v2::auth::{LocalSigner, Signer};
+use polymarket_client_sdk_v2::clob::types::SignatureType;
+use polymarket_client_sdk_v2::clob::{Client as ClobClient, Config};
+use polymarket_client_sdk_v2::gamma::Client as GammaClient;
+use polymarket_client_sdk_v2::{derive_safe_wallet, POLYGON};
 
 // ─── V1 fixed sizing model ────────────────────────────────────────────────────
 
@@ -73,22 +82,41 @@ async fn main() -> anyhow::Result<()> {
     info!("pm-bot starting");
 
     // 2. Load secrets.
-    let _private_key =
+    let private_key =
         std::env::var("POLYGON_PRIVATE_KEY").expect("POLYGON_PRIVATE_KEY must be set");
 
     // 3. Build adapters.
+    let gamma_client = GammaClient::new(GAMMA_API_URL)?;
+
+    // Authenticate the user and obtain the API key
+    let signer = LocalSigner::from_str(&private_key)
+        .expect("error with local signer")
+        .with_chain_id(Some(POLYGON));
+
+    // Creates new credentials or derives existing ones,
+    // then initializes the authenticated client — all in one step
+    let clob_client = ClobClient::new(CLOB_API_URL, Config::default())
+        .expect("error build clob client")
+        .authentication_builder(&signer)
+        .signature_type(SignatureType::GnosisSafe)
+        .authenticate()
+        .await
+        .expect("error authenticating clob client");
+
+    let safe_address = derive_safe_wallet(clob_client.address(), POLYGON)
+        .expect("error deriving safe wallet address");
+
     // TODO: construct real CLOB and Gamma clients here (see pm-explorer for auth pattern).
-    let store: Arc<dyn pm_core::ports::Store> = Arc::new({
-        adapters::sqlite_store::SqliteStore::open("pm-bot.db").expect("failed to open SQLite store")
-    });
-    let catalog: Arc<dyn pm_core::ports::MarketCatalog> = Arc::new(
-        // TODO: adapters::gamma_market_catalog::GammaMarketCatalog::new(gamma_client)
-        todo_catalog(),
-    );
-    let client: Arc<dyn pm_core::ports::MarketClient> = Arc::new(
-        // TODO: adapters::clob_market_client::ClobMarketClient::new(clob_client)
-        todo_client(),
-    );
+    // let store: Arc<dyn pm_core::ports::Store> = Arc::new({
+    //     adapters::sqlite_store::SqliteStore::open("pm-bot.db").expect("failed to open SQLite store")
+    // });
+
+    // USING MockStore for now to avoid wiring up a real database. Remove when real store is wired in.
+    let store: Arc<dyn pm_core::ports::Store> = adapters::mock_store::MockStore::new();
+
+    let catalog: Arc<dyn pm_core::ports::MarketCatalog> = Arc::new(GammaMarketCatalog::new());
+    let client: Arc<dyn pm_core::ports::MarketClient> =
+        Arc::new(ClobMarketClient::new(clob_client, signer, safe_address));
 
     let strategy = Arc::new(V1BasicStrategy::new(
         120, // enter within 2 minutes of cutoff
@@ -137,55 +165,55 @@ async fn main() -> anyhow::Result<()> {
         cancel.clone(),
     ));
 
-    let h_decision = tokio::spawn(decision_center_task(
-        strategy,
-        sizing,
-        tick_rx,
-        market_rx.clone(),
-        intent_tx,
-        slot_rx.clone(),
-        cancel.clone(),
-    ));
+    // let h_decision = tokio::spawn(decision_center_task(
+    //     strategy,
+    //     sizing,
+    //     tick_rx,
+    //     market_rx.clone(),
+    //     intent_tx,
+    //     slot_rx.clone(),
+    //     cancel.clone(),
+    // ));
 
-    let h_executor = tokio::spawn(executor_task(
-        policy,
-        client.clone(),
-        store.clone(),
-        market_rx.clone(),
-        intent_rx,
-        order_update_tx.clone(),
-        slot_tx,
-        cancel.clone(),
-    ));
+    // let h_executor = tokio::spawn(executor_task(
+    //     policy,
+    //     client.clone(),
+    //     store.clone(),
+    //     market_rx.clone(),
+    //     intent_rx,
+    //     order_update_tx.clone(),
+    //     slot_tx,
+    //     cancel.clone(),
+    // ));
 
-    let h_poller = tokio::spawn(order_status_poller_task(
-        client.clone(),
-        store.clone(),
-        order_update_tx,
-        slot_rx,
-        cancel.clone(),
-    ));
+    // let h_poller = tokio::spawn(order_status_poller_task(
+    //     client.clone(),
+    //     store.clone(),
+    //     order_update_tx,
+    //     slot_rx,
+    //     cancel.clone(),
+    // ));
 
-    let h_settlement = tokio::spawn(settlement_task(
-        client.clone(),
-        store.clone(),
-        market_rx,
-        settled_tx,
-        cancel.clone(),
-    ));
+    // let h_settlement = tokio::spawn(settlement_task(
+    //     client.clone(),
+    //     store.clone(),
+    //     market_rx,
+    //     settled_tx,
+    //     cancel.clone(),
+    // ));
 
-    let h_persistence = tokio::spawn(persistence_task(
-        store,
-        order_update_rx,
-        settled_rx,
-        cancel.clone(),
-    ));
+    // let h_persistence = tokio::spawn(persistence_task(
+    //     store,
+    //     order_update_rx,
+    //     settled_rx,
+    //     cancel.clone(),
+    // ));
 
-    let h_heartbeat = tokio::spawn(heartbeat_task(
-        client,
-        Duration::from_secs(30),
-        cancel.clone(),
-    ));
+    // let h_heartbeat = tokio::spawn(heartbeat_task(
+    //     client,
+    //     Duration::from_secs(30),
+    //     cancel.clone(),
+    // ));
 
     info!("all tasks spawned — trading");
 
@@ -197,12 +225,12 @@ async fn main() -> anyhow::Result<()> {
     // Join all handles (ignore individual errors — tasks log their own).
     // let _ = h_price.await;
     let _ = h_market.await;
-    let _ = h_decision.await;
-    let _ = h_executor.await;
-    let _ = h_poller.await;
-    let _ = h_settlement.await;
-    let _ = h_persistence.await;
-    let _ = h_heartbeat.await;
+    // let _ = h_decision.await;
+    // let _ = h_executor.await;
+    // let _ = h_poller.await;
+    // let _ = h_settlement.await;
+    // let _ = h_persistence.await;
+    // let _ = h_heartbeat.await;
 
     info!("pm-bot shut down cleanly");
     Ok(())

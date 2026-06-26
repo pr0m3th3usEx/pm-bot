@@ -3314,6 +3314,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "pm-core",
+ "polymarket_client_sdk_v2",
  "rust_decimal",
  "rust_decimal_macros",
  "tokio",
