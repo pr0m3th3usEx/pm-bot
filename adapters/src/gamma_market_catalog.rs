@@ -12,10 +12,10 @@ use polymarket_client_sdk_v2::gamma::{
 };
 use rust_decimal::Decimal;
 use std::str::FromStr;
+use tracing::info;
 
 pub const GAMMA_API_URL: &str = "https://gamma-api.polymarket.com";
-const PAST_RESULTS_URL: &str = "https://polymarket.com/api/past-results";
-const INTERVAL_SECS: i64 = 300; // matches MarketClock::btc_5m
+const CRYPTO_PRICE_URL: &str = "https://polymarket.com/api/crypto/crypto-price";
 
 pub struct GammaMarketCatalog {
     client: GammaClient,
@@ -69,68 +69,76 @@ impl GammaMarketCatalog {
             .unwrap_or(MarketType::Other)
     }
 
-    /// Fetch the closePrice of the current round's past-result, which is the strike
-    /// (price to beat) for the NEXT round. Called during resolve of the current market.
-    async fn fetch_updown_strike(
+    // Fetch open / close prices for UpDown markets from the crypto-prices API. This is used to determine the "price to beat" (openPrice) for the NEXT round, which is needed during resolution of the current round.
+    async fn fetch_crypto_prices(
         &self,
         slug: &MarketSlug,
         round_start: DateTime<Utc>,
-    ) -> Result<Option<Price>> {
-        let round_end = round_start + chrono::Duration::seconds(INTERVAL_SECS);
-        let start_iso = round_start.format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        let end_iso = round_end.format("%Y-%m-%dT%H:%M:%SZ").to_string();
-
-        println!("fetch_updown_strike: slug={slug}, start={start_iso}, end={end_iso}");
+    ) -> Result<CryptoPricesResponse> {
+        info!(slug = %slug, start = %round_start, "fetching crypto-prices (openPrice) for UpDown strike");
 
         let resp = self
             .http
-            .get(PAST_RESULTS_URL)
+            .get(CRYPTO_PRICE_URL)
             .query(&[
                 ("symbol", "BTC"),
                 ("variant", "fiveminute"),
-                ("assetType", "crypto"),
-                ("currentEventStartTime", start_iso.as_str()),
-                ("count", "1"),
-                ("endDate", end_iso.as_str()),
-                ("includeOutcomesBySlug", "true"),
-                ("pastEventSlugs", slug.0.as_str()),
+                (
+                    "eventStartTime",
+                    round_start.timestamp().to_string().as_str(),
+                ),
             ])
             .send()
             .await
-            .map_err(|e| CoreError::Adapter(format!("past-results request failed: {e}")))?
-            .json::<PastResultsResponse>()
-            .await
-            .map_err(|e| CoreError::Adapter(format!("past-results parse failed: {e}")))?;
+            .map_err(|e| CoreError::Adapter(format!("crypto-prices request failed: {e}")))?;
 
-        let close_price = resp.data.results.into_iter().next().map(|r| r.close_price);
+        let status = resp.status();
 
-        match close_price {
-            None => Ok(None),
-            Some(f) => {
-                let d = Decimal::from_str(&f.to_string())
-                    .map_err(|e| CoreError::Adapter(format!("bad closePrice '{f}': {e}")))?;
-                Ok(Some(Price(d)))
-            }
+        if !status.is_success() {
+            return Err(CoreError::Adapter(format!(
+                "crypto-prices request failed with status {status}"
+            )));
         }
+
+        let response = resp
+            .json::<CryptoPricesResponse>()
+            .await
+            .map_err(|e| CoreError::Adapter(format!("crypto-prices parse failed: {e}")))?;
+
+        Ok(response)
+    }
+
+    /// Fetches the "openPrice" (price to beat) for the NEXT round. Called during resolve of the current market.
+    /// This is a separate API call because the Gamma market-by-slug response does not include
+    fn updown_strike(&self, strike: Option<f64>) -> Result<Option<Price>> {
+        let Some(strike) = strike else {
+            return Ok(None);
+        };
+
+        let d = Decimal::from_str(&strike.to_string())
+            .map_err(|e| CoreError::Adapter(format!("bad openPrice '{strike}': {e}")))?;
+
+        Ok(Some(Price(d)))
     }
 }
 
-// ─── Past-results response types ─────────────────────────────────────────────
+// ─── Crypto-prices response types ─────────────────────────────────────────────
 
 #[derive(serde::Deserialize)]
-struct PastResultsResponse {
-    data: PastResultsData,
-}
-
-#[derive(serde::Deserialize)]
-struct PastResultsData {
-    results: Vec<PastResult>,
-}
-
-#[derive(serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct PastResult {
-    close_price: f64,
+struct CryptoPricesResponse {
+    #[serde(rename = "openPrice")]
+    open_price: f64,
+    #[allow(dead_code)]
+    #[serde(rename = "closePrice")]
+    close_price: Option<f64>,
+    #[allow(dead_code)]
+    timestamp: i64,
+    #[allow(dead_code)]
+    completed: bool,
+    #[allow(dead_code)]
+    incomplete: bool,
+    #[allow(dead_code)]
+    cached: bool,
 }
 
 // ─── MarketCatalog impl ───────────────────────────────────────────────────────
@@ -174,28 +182,38 @@ impl MarketCatalog for GammaMarketCatalog {
             .start_time
             .ok_or_else(|| CoreError::Adapter(format!("missing start_time for {slug}")))?;
         let closes_at = event
-            .closed_time
-            .ok_or_else(|| CoreError::Adapter(format!("missing end_time for {slug}")))?;
+            .end_date
+            .ok_or_else(|| CoreError::Adapter(format!("missing end_date for {slug}")))?;
         let resolves_at = closes_at;
 
         let active = response
             .active
             .ok_or_else(|| CoreError::Adapter(format!("missing active for {slug}")))?;
-        let closed = response
-            .closed
-            .ok_or_else(|| CoreError::Adapter(format!("missing closed for {slug}")))?;
 
-        let status = match (active, closed) {
-            (true, false) => MarketStatus::Open,
-            (false, false) => MarketStatus::Pending,
-            (_, true) => MarketStatus::Resolved,
+        let crypto_prices = self.fetch_crypto_prices(slug, opens_at).await?;
+
+        let status = match (
+            crypto_prices.completed,
+            crypto_prices.incomplete,
+            active,
+            closes_at,
+        ) {
+            (completed, _, _, close_time) if completed || close_time <= Utc::now() => {
+                MarketStatus::Resolved
+            }
+            (false, true, true, _) => MarketStatus::Open,
+            (complete, _, _, _) => {
+                if !complete && closes_at > Utc::now() {
+                    MarketStatus::Resolving
+                } else {
+                    MarketStatus::Pending
+                }
+            }
         };
-
-        println!("opens_at: {opens_at}, closes_at: {closes_at}, resolves_at: {resolves_at}, status: {status:?}, market_type: {market_type:?}");
 
         // Fetch strike for UpDown markets from the previous round's past-results.
         let strike = if market_type == MarketType::UpDown {
-            self.fetch_updown_strike(slug, opens_at).await?
+            self.updown_strike(Some(crypto_prices.open_price))?
         } else {
             None
         };

@@ -19,6 +19,7 @@ use polymarket_client_sdk_v2::{
 };
 use serde::Deserialize;
 
+pub const CLOB_API_URL: &str = "https://clob.polymarket.com";
 const RELAYER_URL: &str = "https://relayer-v2.polymarket.com";
 const COLLATERAL_ADAPTER: &str = "0xAdA100Db00Ca00073811820692005400218FcE1f";
 const COLLATERAL_TOKEN: &str = "0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB";

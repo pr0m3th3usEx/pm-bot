@@ -8,7 +8,7 @@ license.workspace = true
 [dependencies]
 rust_decimal.workspace = true
 tokio       = { workspace = true, features = ["full"] }
-polymarket_client_sdk_v2 = { version = "0.5.1" }
+polymarket_client_sdk_v2 = { version = "0.5.1", features = ["clob"] }
 tokio-util  = { workspace = true }
 tracing.workspace = true
 async-trait.workspace = true
