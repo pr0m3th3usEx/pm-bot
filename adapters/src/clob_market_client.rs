@@ -54,9 +54,9 @@ struct RelayerNonceResponse {
 }
 
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
 struct RelayerSubmitResponse {
     state: String,
+    #[serde(rename = "transactionID")]
     transaction_id: Option<String>,
 }
 
@@ -69,6 +69,7 @@ where
     signer: Sgn,
     safe_address: Address,
     http: reqwest::Client,
+    relayer_api_key: String,
 }
 
 impl<K, Sgn> ClobMarketClient<K, Sgn>
@@ -76,12 +77,18 @@ where
     K: Kind + Send + Sync,
     Sgn: PmSigner + Send + Sync,
 {
-    pub fn new(client: ClobClient<Authenticated<K>>, signer: Sgn, safe_address: Address) -> Self {
+    pub fn new(
+        client: ClobClient<Authenticated<K>>,
+        signer: Sgn,
+        safe_address: Address,
+        relayer_api_key: String,
+    ) -> Self {
         Self {
             client,
             signer,
             safe_address,
             http: reqwest::Client::new(),
+            relayer_api_key,
         }
     }
 }
@@ -236,25 +243,56 @@ where
 
         let signing_hash: B256 = safe_tx.eip712_signing_hash(&domain);
 
-        // 4. Sign the hash.
-        let sig = PmSigner::sign_hash(&self.signer, &signing_hash)
+        tracing::debug!(
+            signing_hash = %signing_hash,
+            signer = %signer_address,
+            safe = %self.safe_address,
+            nonce = %nonce_resp.nonce,
+            "computed EIP-712 SafeTx signing hash"
+        );
+
+        // 4. Sign the hash via personal_sign (EIP-191).
+        // The relayer/Safe verify SAFE transactions through the `eth_sign` branch:
+        // they recover from keccak256("\x19Ethereum Signed Message:\n32" || safeTxHash).
+        // So we must sign the *prefixed* hash, not the raw hash. `sign_message`
+        // applies eip191_hash_message (the personal_sign prefix) before signing.
+        // This mirrors the TS SDK, which signs via viem `signMessage({ raw })`.
+        let sig = PmSigner::sign_message(&self.signer, signing_hash.as_slice())
             .await
             .map_err(|e| CoreError::Adapter(format!("signing failed: {e}")))?;
 
-        // 5. Pack signature — adjust v per Safe convention.
-        // sig.v() returns bool (parity): true = 28, false = 27.
+        // 5. Pack signature — Safe eth_sign convention adds 4 to v (27->31, 28->32),
+        // which tells checkSignatures to use the personal_sign recovery branch.
         let (r, s) = (sig.r(), sig.s());
         let v_raw = if sig.v() { 28u8 } else { 27u8 };
-        let packed_v = match v_raw {
-            27 | 28 => v_raw + 4,
-            v => v,
-        };
+        let packed_v = v_raw + 4;
         let packed_sig = format!(
             "0x{}{}{:02x}",
             alloy_hex::encode(r.to_be_bytes::<32>()),
             alloy_hex::encode(s.to_be_bytes::<32>()),
             packed_v
         );
+
+        // Self-verify: recovering from the EIP-191-prefixed hash must yield our signer.
+        match sig.recover_address_from_msg(signing_hash.as_slice()) {
+            Ok(recovered) => {
+                tracing::debug!(
+                    recovered = %recovered,
+                    expected  = %signer_address,
+                    matches   = %(recovered == signer_address),
+                    signature = %packed_sig,
+                    "signature self-check (personal_sign)"
+                );
+                if recovered != signer_address {
+                    tracing::error!(
+                        recovered = %recovered,
+                        expected  = %signer_address,
+                        "BUG: recovered address does not match signer — EIP-712 hash is wrong"
+                    );
+                }
+            }
+            Err(e) => tracing::error!(error = %e, "signature recovery failed"),
+        }
 
         // 6. POST to relayer.
         let body = serde_json::json!({
@@ -275,20 +313,34 @@ where
             }
         });
 
-        let resp: RelayerSubmitResponse = self
+        let submit_raw = self
             .http
             .post(format!("{RELAYER_URL}/submit"))
+            .header("RELAYER_API_KEY", &self.relayer_api_key)
+            .header("RELAYER_API_KEY_ADDRESS", format!("{signer_address:#x}"))
             .json(&body)
             .send()
             .await
-            .map_err(|e| CoreError::Adapter(format!("relayer submit request failed: {e}")))?
-            .error_for_status()
-            .map_err(|e| CoreError::Adapter(format!("relayer submit rejected: {e}")))?
+            .map_err(|e| CoreError::Adapter(format!("relayer submit request failed: {e}")))?;
+
+        if !submit_raw.status().is_success() {
+            let status = submit_raw.status();
+            let body_text = submit_raw.text().await.unwrap_or_default();
+            tracing::error!(
+                status = %status,
+                body = %body_text,
+                request_body = %serde_json::to_string(&body).unwrap_or_default(),
+                "relayer submit rejected"
+            );
+            return Err(CoreError::Adapter(format!(
+                "relayer submit rejected: {status} — {body_text}"
+            )));
+        }
+
+        let resp: RelayerSubmitResponse = submit_raw
             .json()
             .await
-            .map_err(|e| {
-                CoreError::Adapter(format!("relayer submit response parse failed: {e}"))
-            })?;
+            .map_err(|e| CoreError::Adapter(format!("relayer submit response parse failed: {e}")))?;
 
         tracing::info!(
             state = %resp.state,
@@ -331,6 +383,10 @@ mod tests {
             println!("[SKIP] POLYGON_PRIVATE_KEY not set");
             return None;
         };
+        let Ok(relayer_api_key) = std::env::var("RELAYER_API_KEY") else {
+            println!("[SKIP] RELAYER_API_KEY not set");
+            return None;
+        };
         let signer = LocalSigner::from_str(&raw_key)
             .expect("invalid POLYGON_PRIVATE_KEY")
             .with_chain_id(Some(POLYGON));
@@ -343,7 +399,7 @@ mod tests {
             .expect("CLOB authentication failed");
         let safe = derive_safe_wallet(clob.address(), POLYGON)
             .expect("failed to derive safe wallet address");
-        Some(Box::new(ClobMarketClient::new(clob, signer, safe)))
+        Some(Box::new(ClobMarketClient::new(clob, signer, safe, relayer_api_key)))
     }
 
     #[tokio::test]

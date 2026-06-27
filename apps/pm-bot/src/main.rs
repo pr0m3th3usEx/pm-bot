@@ -84,6 +84,8 @@ async fn main() -> anyhow::Result<()> {
     // 2. Load secrets.
     let private_key =
         std::env::var("POLYGON_PRIVATE_KEY").expect("POLYGON_PRIVATE_KEY must be set");
+    let relayer_api_key =
+        std::env::var("RELAYER_API_KEY").expect("RELAYER_API_KEY must be set");
 
     // 3. Build adapters.
     let gamma_client = GammaClient::new(GAMMA_API_URL)?;
@@ -116,7 +118,7 @@ async fn main() -> anyhow::Result<()> {
 
     let catalog: Arc<dyn pm_core::ports::MarketCatalog> = Arc::new(GammaMarketCatalog::new());
     let client: Arc<dyn pm_core::ports::MarketClient> =
-        Arc::new(ClobMarketClient::new(clob_client, signer, safe_address));
+        Arc::new(ClobMarketClient::new(clob_client, signer, safe_address, relayer_api_key));
 
     let strategy = Arc::new(V1BasicStrategy::new(
         120, // enter within 2 minutes of cutoff
@@ -198,6 +200,7 @@ async fn main() -> anyhow::Result<()> {
     //     client.clone(),
     //     store.clone(),
     //     market_rx,
+    //     tick_tx.subscribe(),
     //     settled_tx,
     //     cancel.clone(),
     // ));
@@ -209,11 +212,11 @@ async fn main() -> anyhow::Result<()> {
         cancel.clone(),
     ));
 
-    // let h_heartbeat = tokio::spawn(heartbeat_task(
-    //     client,
-    //     Duration::from_secs(30),
-    //     cancel.clone(),
-    // ));
+    let h_heartbeat = tokio::spawn(heartbeat_task(
+        client,
+        Duration::from_secs(30),
+        cancel.clone(),
+    ));
 
     info!("all tasks spawned — trading");
 
@@ -230,7 +233,7 @@ async fn main() -> anyhow::Result<()> {
     let _ = h_poller.await;
     // let _ = h_settlement.await;
     let _ = h_persistence.await;
-    // let _ = h_heartbeat.await;
+    let _ = h_heartbeat.await;
 
     info!("pm-bot shut down cleanly");
     Ok(())

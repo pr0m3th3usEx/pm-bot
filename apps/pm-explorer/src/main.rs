@@ -1,8 +1,13 @@
+use adapters::clob_market_client::ClobMarketClient;
+use alloy::hex::FromHex as _;
+use alloy::primitives::{FixedBytes, U256};
+use pm_core::domain::PositionRecord;
+use pm_core::ports::MarketClient;
+use pm_core::types::{MarketSlug, PositionStatus, Price, Shares, Side, TokenId};
 use polymarket_client_sdk_v2::auth::{LocalSigner, Signer};
 use polymarket_client_sdk_v2::clob::order_builder::OrderBuilder;
 use polymarket_client_sdk_v2::clob::types::request::PriceRequest;
 use polymarket_client_sdk_v2::clob::types::OrderStatusType;
-use polymarket_client_sdk_v2::clob::types::Side::{self, Buy};
 use polymarket_client_sdk_v2::clob::types::SignatureType;
 use polymarket_client_sdk_v2::clob::{Client as ClobClient, Config};
 use polymarket_client_sdk_v2::gamma::types::request::EventBySlugRequest;
@@ -61,46 +66,89 @@ async fn main() {
     let address = clob_client.address();
 
     // Print the authenticated user's safe address
+    let safe_address = derive_safe_wallet(address, POLYGON).expect("invalid address");
     println!(
         "Authenticated user's proxy address: {:?}",
-        derive_safe_wallet(address, POLYGON)
+        safe_address
     );
 
-    // Get public profile data
-    let gamma_client = GammaClient::new("https://gamma-api.polymarket.com")
-        .expect("Failed to create Gamma client");
+    /// (TEST CODE) Redeem a position 
+    let condition_id = "0xfb3d98e9e007bd2bec40e442a83e0457b1c935b37a5c43721ab4e11e9843fdc3";
+    
+    let position = PositionRecord {
+        id: Some(123456789),
+        order_id: Some("order_123456789".to_string()),
+        avg_price: Some(Price(dec!(95.3))),
+        limit_price: Price(dec!(100.0)),
+        shares: Shares(dec!(1.1)),
+        condition_id: FixedBytes::<32>::from_hex(condition_id).expect("Invalid condition ID"),
+        market_slug: MarketSlug("btc-updown-5m-1782576900".to_string()),
+        side: Side::Buy,
+        outcome_name: "Down".to_string(),
+        token_id: TokenId(U256::from_str("4262301778608766021907538487857903854184338853146158900275888636048660731688").expect("Invalid token ID")),
+        strike: Some(Price(dec!(60656.423699213774))),
+        realized_pnl: None,
+        status: PositionStatus::Filled,
+        submitted_at: pm_core::types::Timestamp(1682576900000),
+        updated_at: pm_core::types::Timestamp(1682576900000),
+    };
 
-    let profile_request = PublicProfileRequest::builder().address(address).build();
+    let relayer_api_key = std::env::var("RELAYER_API_KEY")
+        .expect("RELAYER_API_KEY must be set in the .env file");
 
-    let profile = gamma_client
-        .public_profile(&profile_request)
-        .await
-        .expect("error loading profile");
+    let client = ClobMarketClient::new(clob_client, signer, safe_address, relayer_api_key);
 
-    println!("Public Profile: {:?}", profile);
 
-    // Try to trade a position "Up" on the BTC 5 minute market
 
-    // Step 1: Get BTC 5 minute price data
-    let btc_price_request = MarketBySlugRequest::builder()
-        .slug(format!("btc-updown-5m-{}", current_5m_candle_timestamp))
-        .build();
+    let response =  client.redeem(&position).await.expect("error redeeming position");
 
-    let btc_price = gamma_client
-        .market_by_slug(&btc_price_request)
-        .await
-        .expect("error loading BTC price data");
+    println!("Redeem response: {:?}", response);
 
-    // println!("BTC 5 Minute Price Data: {:#?}", btc_price);
 
-    // Get price to beat in event
-    let req = EventBySlugRequest::builder()
-        .slug(format!("btc-updown-5m-{}", current_5m_candle_timestamp))
-        .build();
-    let res = gamma_client
-        .event_by_slug(&req)
-        .await
-        .expect("error loading event data");
+
+
+
+
+
+
+
+
+
+    // // Get public profile data
+    // let gamma_client = GammaClient::new("https://gamma-api.polymarket.com")
+    //     .expect("Failed to create Gamma client");
+
+    // let profile_request = PublicProfileRequest::builder().address(address).build();
+
+    // let profile = gamma_client
+    //     .public_profile(&profile_request)
+    //     .await
+    //     .expect("error loading profile");
+
+    // println!("Public Profile: {:?}", profile);
+
+    // // Try to trade a position "Up" on the BTC 5 minute market
+
+    // // Step 1: Get BTC 5 minute price data
+    // let btc_price_request = MarketBySlugRequest::builder()
+    //     .slug(format!("btc-updown-5m-{}", current_5m_candle_timestamp))
+    //     .build();
+
+    // let btc_price = gamma_client
+    //     .market_by_slug(&btc_price_request)
+    //     .await
+    //     .expect("error loading BTC price data");
+
+    // // println!("BTC 5 Minute Price Data: {:#?}", btc_price);
+
+    // // Get price to beat in event
+    // let req = EventBySlugRequest::builder()
+    //     .slug(format!("btc-updown-5m-{}", current_5m_candle_timestamp))
+    //     .build();
+    // let res = gamma_client
+    //     .event_by_slug(&req)
+    //     .await
+    //     .expect("error loading event data");
 
     // let Some(events) = btc_price.events else {
     //     panic!("Gamma API response missing events for market slug btc-updown-5m-{}", current_5m_candle_timestamp);

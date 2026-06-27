@@ -10,5 +10,9 @@ tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true
+adapters = { path = "../../adapters" }
 pm-core = { path = "../../libs/pm-core" }
 polymarket_client_sdk_v2 = { version = "0.5.1", features = ["clob", "gamma", "data"] }
+rust_decimal.workspace = true
+rust_decimal_macros = "1"
+alloy.workspace     = true

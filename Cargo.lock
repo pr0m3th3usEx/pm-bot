@@ -3343,9 +3343,13 @@ dependencies = [
 name = "pm-explorer"
 version = "0.1.0"
 dependencies = [
+ "adapters",
+ "alloy 2.1.0",
  "anyhow",
  "pm-core",
  "polymarket_client_sdk_v2",
+ "rust_decimal",
+ "rust_decimal_macros",
  "serde",
  "serde_json",
  "tokio",
