@@ -1,10 +1,11 @@
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
-use tracing::info;
+use tracing::{error, info, warn};
 
-use crate::domain::{OrderUpdate, Settled};
+use crate::domain::{OrderUpdate, PositionUpdate, Settled};
 use crate::ports::Store;
+use crate::types::{PositionStatus, Timestamp};
 
 pub async fn persistence_task(
     store: Arc<dyn Store>,
@@ -13,7 +14,6 @@ pub async fn persistence_task(
     cancel: CancellationToken,
 ) {
     info!("persistence_task started");
-    let _ = &store;
     loop {
         tokio::select! {
             _ = cancel.cancelled() => {
@@ -21,12 +21,44 @@ pub async fn persistence_task(
                 break;
             }
             Some(update) = order_update_rx.recv() => {
-                // TODO: map OrderUpdate variants to PositionUpdate and call store.update_position
-                todo!("persist order update: {:?}", update)
+                let (position_id, pu) = match update {
+                    // Executor already persists Submitted inline; skip to avoid double-write.
+                    OrderUpdate::Submitted { .. } => continue,
+                    OrderUpdate::Filled { position_id, avg_price, size_matched, .. } => (
+                        position_id,
+                        PositionUpdate::Filled { avg_price, size_matched, updated_at: Timestamp::now_ms() },
+                    ),
+                    OrderUpdate::Rejected { position_id, .. } => (
+                        position_id,
+                        PositionUpdate::Rejected { updated_at: Timestamp::now_ms() },
+                    ),
+                    OrderUpdate::Cancelled { position_id, .. } => (
+                        position_id,
+                        PositionUpdate::Cancelled { updated_at: Timestamp::now_ms() },
+                    ),
+                };
+                if let Err(e) = store.update_position(position_id, &pu).await {
+                    error!(position_id, error = %e, "failed to persist order update");
+                }
             }
             Some(settled) = settled_rx.recv() => {
-                // TODO: map Settled to PositionUpdate::Won/Lost and call store.update_position
-                todo!("persist settled event: {:?}", settled)
+                let pu = match settled.status {
+                    PositionStatus::Won => PositionUpdate::Won {
+                        realized_pnl: settled.realized_pnl,
+                        updated_at: Timestamp::now_ms(),
+                    },
+                    PositionStatus::Lost => PositionUpdate::Lost {
+                        realized_pnl: settled.realized_pnl,
+                        updated_at: Timestamp::now_ms(),
+                    },
+                    other => {
+                        warn!(status = ?other, position_id = settled.position_id, "unexpected status in Settled; skipping");
+                        continue;
+                    }
+                };
+                if let Err(e) = store.update_position(settled.position_id, &pu).await {
+                    error!(position_id = settled.position_id, error = %e, "failed to persist settled event");
+                }
             }
         }
     }
