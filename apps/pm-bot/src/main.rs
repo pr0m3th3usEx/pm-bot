@@ -202,12 +202,12 @@ async fn main() -> anyhow::Result<()> {
     //     cancel.clone(),
     // ));
 
-    // let h_persistence = tokio::spawn(persistence_task(
-    //     store,
-    //     order_update_rx,
-    //     settled_rx,
-    //     cancel.clone(),
-    // ));
+    let h_persistence = tokio::spawn(persistence_task(
+        store,
+        order_update_rx,
+        settled_rx,
+        cancel.clone(),
+    ));
 
     // let h_heartbeat = tokio::spawn(heartbeat_task(
     //     client,
@@ -227,67 +227,11 @@ async fn main() -> anyhow::Result<()> {
     let _ = h_market.await;
     // let _ = h_decision.await;
     // let _ = h_executor.await;
-    // let _ = h_poller.await;
+    let _ = h_poller.await;
     // let _ = h_settlement.await;
-    // let _ = h_persistence.await;
+    let _ = h_persistence.await;
     // let _ = h_heartbeat.await;
 
     info!("pm-bot shut down cleanly");
     Ok(())
-}
-
-// Placeholder helpers for todo adapters — remove when real ones are wired in.
-fn todo_catalog() -> impl pm_core::ports::MarketCatalog {
-    struct TodoCatalog;
-    #[async_trait::async_trait]
-    impl pm_core::ports::MarketCatalog for TodoCatalog {
-        async fn resolve(
-            &self,
-            _slug: &pm_core::types::MarketSlug,
-        ) -> pm_core::error::Result<pm_core::domain::Market> {
-            todo!("wire real GammaMarketCatalog")
-        }
-    }
-    TodoCatalog
-}
-
-fn todo_client() -> impl pm_core::ports::MarketClient {
-    struct TodoClient;
-    #[async_trait::async_trait]
-    impl pm_core::ports::MarketClient for TodoClient {
-        async fn quote(
-            &self,
-            _token_id: &pm_core::types::TokenId,
-            _side: pm_core::types::Side,
-        ) -> pm_core::error::Result<pm_core::types::Price> {
-            todo!()
-        }
-        async fn place_order(
-            &self,
-            _intent: &pm_core::domain::Intent,
-            _token_id: &pm_core::types::TokenId,
-        ) -> pm_core::error::Result<String> {
-            todo!()
-        }
-        async fn cancel_order(&self, _order_id: &str) -> pm_core::error::Result<()> {
-            todo!()
-        }
-        async fn order_status(
-            &self,
-            _order_id: &str,
-            _position_id: i64,
-        ) -> pm_core::error::Result<pm_core::domain::OrderUpdate> {
-            todo!()
-        }
-        async fn redeem(
-            &self,
-            _position: &pm_core::domain::PositionRecord,
-        ) -> pm_core::error::Result<pm_core::types::Usdc> {
-            todo!()
-        }
-        async fn heartbeat(&self) -> pm_core::error::Result<()> {
-            todo!()
-        }
-    }
-    TodoClient
 }
