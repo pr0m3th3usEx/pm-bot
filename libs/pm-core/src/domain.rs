@@ -29,6 +29,10 @@ pub struct Market {
     pub closes_at: Timestamp,
     pub resolves_at: Timestamp,
     pub status: MarketStatus,
+    /// Minimum price increment for limit orders (Gamma `orderPriceMinTickSize`, e.g. 0.01).
+    pub order_price_min_tick_size: Price,
+    /// Minimum order size in shares the CLOB will accept (Gamma `orderMinSize`, e.g. 5).
+    pub order_min_size: Shares,
 }
 
 /// Alias: the market rotation task publishes Market on a watch channel.

@@ -3314,6 +3314,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "pm-core",
+ "pm-strategy",
  "polymarket_client_sdk_v2",
  "rust_decimal",
  "rust_decimal_macros",
@@ -3353,6 +3354,18 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+]
+
+[[package]]
+name = "pm-strategy"
+version = "0.1.0"
+dependencies = [
+ "alloy 2.1.0",
+ "pm-core",
+ "polymarket_client_sdk_v2",
+ "rust_decimal",
+ "rust_decimal_macros",
+ "tracing",
 ]
 
 [[package]]

@@ -73,8 +73,8 @@ pub enum Outcome {
 impl Outcome {
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::Up => "up",
-            Self::Down => "down",
+            Self::Up => "Up",
+            Self::Down => "Down",
         }
     }
 }
