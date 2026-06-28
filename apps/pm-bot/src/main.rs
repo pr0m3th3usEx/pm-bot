@@ -14,6 +14,7 @@ use std::time::Duration;
 use adapters::clob_market_client::{ClobMarketClient, CLOB_API_URL};
 use adapters::gamma_market_catalog::GammaMarketCatalog;
 use pm_core::tasks::decision_center::decision_center_task;
+use pm_core::tasks::executor::executor_task;
 use pm_core::tasks::price_feed::price_feed_task;
 use tokio::sync::{broadcast, mpsc, watch};
 use tokio_util::sync::CancellationToken;
@@ -94,13 +95,12 @@ async fn main() -> anyhow::Result<()> {
     let safe_address = derive_safe_wallet(clob_client.address(), POLYGON)
         .expect("error deriving safe wallet address");
 
-    // TODO: construct real CLOB and Gamma clients here (see pm-explorer for auth pattern).
-    // let store: Arc<dyn pm_core::ports::Store> = Arc::new({
-    //     adapters::sqlite_store::SqliteStore::open("pm-bot.db").expect("failed to open SQLite store")
-    // });
+    let store: Arc<dyn pm_core::ports::Store> = Arc::new({
+        adapters::sqlite_store::SqliteStore::open("pm-bot.db").expect("failed to open SQLite store")
+    });
 
-    // USING MockStore for now to avoid wiring up a real database. Remove when real store is wired in.
-    let store: Arc<dyn pm_core::ports::Store> = adapters::mock_store::MockStore::new();
+    // // USING MockStore for now to avoid wiring up a real database. Remove when real store is wired in.
+    // let store: Arc<dyn pm_core::ports::Store> = adapters::mock_store::MockStore::new();
 
     let catalog: Arc<dyn pm_core::ports::MarketCatalog> = Arc::new(GammaMarketCatalog::new());
     let client: Arc<dyn pm_core::ports::MarketClient> = Arc::new(ClobMarketClient::new(
@@ -123,12 +123,12 @@ async fn main() -> anyhow::Result<()> {
     // 4. Wire channels.
     let (tick_tx, _) = broadcast::channel::<pm_core::domain::Tick>(256);
     let (market_tx, market_rx) = watch::channel::<Option<ActiveMarket>>(None);
-    let (intent_tx, _intent_rx) = mpsc::channel::<pm_core::domain::Intent>(8);
+    let (intent_tx, intent_rx) = mpsc::channel::<pm_core::domain::Intent>(8);
     let (order_update_tx, _) = broadcast::channel::<pm_core::domain::OrderUpdate>(64);
     let (settled_tx, _) = broadcast::channel::<pm_core::domain::Settled>(16);
     let (redeemed_tx, redeemed_rx) = mpsc::channel::<Redeemed>(16);
     let (pending_tx, pending_rx) = mpsc::channel::<PendingRedemption>(16);
-    let (_slot_tx, slot_rx) = watch::channel::<RoundSlotState>(RoundSlotState::Empty);
+    let (slot_tx, slot_rx) = watch::channel::<RoundSlotState>(RoundSlotState::Empty);
 
     let cancel = CancellationToken::new();
 
@@ -176,16 +176,16 @@ async fn main() -> anyhow::Result<()> {
         cancel.clone(),
     ));
 
-    // let h_executor = tokio::spawn(executor_task(
-    //     policy,
-    //     client.clone(),
-    //     store.clone(),
-    //     market_rx.clone(),
-    //     intent_rx,
-    //     order_update_tx.clone(),
-    //     slot_tx,
-    //     cancel.clone(),
-    // ));
+    let h_executor = tokio::spawn(executor_task(
+        policy,
+        client.clone(),
+        store.clone(),
+        market_rx.clone(),
+        intent_rx,
+        order_update_tx.clone(),
+        slot_tx,
+        cancel.clone(),
+    ));
 
     let h_poller = tokio::spawn(order_status_poller_task(
         client.clone(),
@@ -245,7 +245,7 @@ async fn main() -> anyhow::Result<()> {
     let _ = h_price.await;
     let _ = h_market.await;
     let _ = h_decision.await;
-    // let _ = h_executor.await;
+    let _ = h_executor.await;
     let _ = h_poller.await;
     let _ = h_settlement.await;
     let _ = h_persistence.await;
