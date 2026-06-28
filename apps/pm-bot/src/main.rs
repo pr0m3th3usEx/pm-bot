@@ -155,9 +155,12 @@ async fn main() -> anyhow::Result<()> {
         tokio::time::sleep(Duration::from_millis(wait_ms)).await;
     }
 
+    // 6. Warm up
+
+    // let price_feed = Box::new(adapters::chainlink_price_feed::ChainlinkPriceFeed::connect());
+
     // 6. Spawn tasks.
     // TODO: wire ChainlinkPriceFeed (V1 price source; V2 may aggregate multiple feeds)
-    // let price_feed = Box::new(adapters::chainlink_price_feed::ChainlinkPriceFeed::connect());
     // let h_price = tokio::spawn(price_feed_task(price_feed, tick_tx, cancel.clone()));
 
     let h_market = tokio::spawn(market_rotation_task(
@@ -196,14 +199,14 @@ async fn main() -> anyhow::Result<()> {
         cancel.clone(),
     ));
 
-    // let h_settlement = tokio::spawn(settlement_task(
-    //     client.clone(),
-    //     store.clone(),
-    //     market_rx,
-    //     tick_tx.subscribe(),
-    //     settled_tx,
-    //     cancel.clone(),
-    // ));
+    let h_settlement = tokio::spawn(settlement_task(
+        client.clone(),
+        store.clone(),
+        market_rx,
+        tick_tx.subscribe(),
+        settled_tx,
+        cancel.clone(),
+    ));
 
     let h_persistence = tokio::spawn(persistence_task(
         store,
@@ -231,7 +234,7 @@ async fn main() -> anyhow::Result<()> {
     // let _ = h_decision.await;
     // let _ = h_executor.await;
     let _ = h_poller.await;
-    // let _ = h_settlement.await;
+    let _ = h_settlement.await;
     let _ = h_persistence.await;
     let _ = h_heartbeat.await;
 
