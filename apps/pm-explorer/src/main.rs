@@ -5,17 +5,9 @@ use pm_core::domain::PositionRecord;
 use pm_core::ports::MarketClient;
 use pm_core::types::{MarketSlug, PositionStatus, Price, Shares, Side, TokenId};
 use polymarket_client_sdk_v2::auth::{LocalSigner, Signer};
-use polymarket_client_sdk_v2::clob::order_builder::OrderBuilder;
-use polymarket_client_sdk_v2::clob::types::request::PriceRequest;
-use polymarket_client_sdk_v2::clob::types::OrderStatusType;
 use polymarket_client_sdk_v2::clob::types::SignatureType;
 use polymarket_client_sdk_v2::clob::{Client as ClobClient, Config};
-use polymarket_client_sdk_v2::gamma::types::request::EventBySlugRequest;
-use polymarket_client_sdk_v2::gamma::{
-    types::request::{MarketBySlugRequest, PublicProfileRequest, PublicProfileRequestBuilder},
-    Client as GammaClient,
-};
-use polymarket_client_sdk_v2::types::{dec, Decimal};
+use polymarket_client_sdk_v2::types::dec;
 use polymarket_client_sdk_v2::{derive_safe_wallet, POLYGON};
 use std::str::FromStr;
 

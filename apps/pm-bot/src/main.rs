@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use adapters::clob_market_client::{ClobMarketClient, CLOB_API_URL};
-use adapters::gamma_market_catalog::{GammaMarketCatalog, GAMMA_API_URL};
+use adapters::gamma_market_catalog::GammaMarketCatalog;
 use pm_core::tasks::price_feed::price_feed_task;
 use tokio::sync::{broadcast, mpsc, watch};
 use tokio_util::sync::CancellationToken;
@@ -38,7 +38,6 @@ use tokio::sync::RwLock;
 use polymarket_client_sdk_v2::auth::{LocalSigner, Signer};
 use polymarket_client_sdk_v2::clob::types::SignatureType;
 use polymarket_client_sdk_v2::clob::{Client as ClobClient, Config};
-use polymarket_client_sdk_v2::gamma::Client as GammaClient;
 use polymarket_client_sdk_v2::{derive_safe_wallet, POLYGON};
 
 // ─── V1 fixed sizing model ────────────────────────────────────────────────────
@@ -90,7 +89,7 @@ async fn main() -> anyhow::Result<()> {
     let rpc_url = std::env::var("POLYGON_RPC_URL").expect("POLYGON_RPC_URL must be set");
 
     // 3. Build adapters.
-    let gamma_client = GammaClient::new(GAMMA_API_URL)?;
+    // let gamma_client = GammaClient::new(GAMMA_API_URL)?;
 
     // Authenticate the user and obtain the API key
     let signer = LocalSigner::from_str(&private_key)
