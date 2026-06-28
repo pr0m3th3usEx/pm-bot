@@ -348,10 +348,9 @@ where
             )));
         }
 
-        let resp: RelayerSubmitResponse = submit_raw
-            .json()
-            .await
-            .map_err(|e| CoreError::Adapter(format!("relayer submit response parse failed: {e}")))?;
+        let resp: RelayerSubmitResponse = submit_raw.json().await.map_err(|e| {
+            CoreError::Adapter(format!("relayer submit response parse failed: {e}"))
+        })?;
 
         tracing::info!(
             state = %resp.state,
@@ -400,7 +399,9 @@ where
             .parse()
             .map_err(|e| CoreError::Adapter(format!("bad collateral token address: {e}")))?;
 
-        let call = balanceOfCall { account: self.safe_address };
+        let call = balanceOfCall {
+            account: self.safe_address,
+        };
         let call_data = call.abi_encode();
 
         let tx = alloy::rpc::types::TransactionRequest::default()
@@ -422,6 +423,10 @@ where
     }
 
     async fn heartbeat(&self) -> Result<()> {
+        if self.client.heartbeats_active() {
+            return Ok(());
+        }
+
         self.client
             .post_heartbeat(None)
             .await
@@ -578,7 +583,8 @@ mod tests {
             return;
         }
 
-        let tx_id = std::env::var("POLYMARKET_REDEMPTION_TX_ID").expect("POLYMARKET_REDEMPTION_TX_ID not set");
+        let tx_id = std::env::var("POLYMARKET_REDEMPTION_TX_ID")
+            .expect("POLYMARKET_REDEMPTION_TX_ID not set");
         let status = client
             .redemption_status(&tx_id)
             .await
@@ -600,7 +606,7 @@ mod tests {
             return;
         }
         let balance = client.balance().await.expect("balance failed");
-    
+
         assert!(
             balance.0 >= rust_decimal::Decimal::ZERO,
             "balance must be >= 0, got {:?}",

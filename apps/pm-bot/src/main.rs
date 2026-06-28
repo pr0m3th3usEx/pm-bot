@@ -21,17 +21,18 @@ use tracing_subscriber::{fmt, EnvFilter};
 
 use pm_core::{
     clock::MarketClock,
-    domain::ActiveMarket,
+    domain::{ActiveMarket, PendingRedemption, Redeemed},
     ports::{Admission, EntryPolicy},
-    state::RoundSlotState,
+    state::{BankrollState, RoundSlotState},
     strategy::V1BasicStrategy,
     tasks::{
-        decision_center::decision_center_task, executor::executor_task, heartbeat::heartbeat_task,
-        market_rotation::market_rotation_task, order_status_poller::order_status_poller_task,
-        persistence::persistence_task, settlement::settlement_task,
+        bankroll::bankroll_task, heartbeat::heartbeat_task, market_rotation::market_rotation_task,
+        order_status_poller::order_status_poller_task, persistence::persistence_task,
+        redeem_status_poller::redeem_status_poller_task, settlement::settlement_task,
     },
     types::Shares,
 };
+use tokio::sync::RwLock;
 
 use polymarket_client_sdk_v2::auth::{LocalSigner, Signer};
 use polymarket_client_sdk_v2::clob::types::SignatureType;
@@ -84,8 +85,8 @@ async fn main() -> anyhow::Result<()> {
     // 2. Load secrets.
     let private_key =
         std::env::var("POLYGON_PRIVATE_KEY").expect("POLYGON_PRIVATE_KEY must be set");
-    let relayer_api_key =
-        std::env::var("RELAYER_API_KEY").expect("RELAYER_API_KEY must be set");
+    let relayer_api_key = std::env::var("RELAYER_API_KEY").expect("RELAYER_API_KEY must be set");
+    let rpc_url = std::env::var("POLYGON_RPC_URL").expect("POLYGON_RPC_URL must be set");
 
     // 3. Build adapters.
     let gamma_client = GammaClient::new(GAMMA_API_URL)?;
@@ -117,8 +118,13 @@ async fn main() -> anyhow::Result<()> {
     let store: Arc<dyn pm_core::ports::Store> = adapters::mock_store::MockStore::new();
 
     let catalog: Arc<dyn pm_core::ports::MarketCatalog> = Arc::new(GammaMarketCatalog::new());
-    let client: Arc<dyn pm_core::ports::MarketClient> =
-        Arc::new(ClobMarketClient::new(clob_client, signer, safe_address, relayer_api_key));
+    let client: Arc<dyn pm_core::ports::MarketClient> = Arc::new(ClobMarketClient::new(
+        clob_client,
+        signer,
+        safe_address,
+        relayer_api_key,
+        rpc_url,
+    ));
 
     let strategy = Arc::new(V1BasicStrategy::new(
         120, // enter within 2 minutes of cutoff
@@ -131,13 +137,14 @@ async fn main() -> anyhow::Result<()> {
     let clock = MarketClock::btc_5m();
 
     // 4. Wire channels.
-    let (tick_tx, tick_rx) = broadcast::channel::<pm_core::domain::Tick>(256);
-    let _ = tick_tx; // passed into price_feed_task once ChainlinkPriceFeed is wired below.
+    let (tick_tx, _tick_rx) = broadcast::channel::<pm_core::domain::Tick>(256);
     let (market_tx, market_rx) = watch::channel::<Option<ActiveMarket>>(None);
-    let (intent_tx, intent_rx) = mpsc::channel::<pm_core::domain::Intent>(8);
-    let (order_update_tx, order_update_rx) = mpsc::channel::<pm_core::domain::OrderUpdate>(64);
-    let (settled_tx, settled_rx) = mpsc::channel::<pm_core::domain::Settled>(16);
-    let (slot_tx, slot_rx) = watch::channel::<RoundSlotState>(RoundSlotState::Empty);
+    let (_intent_tx, _intent_rx) = mpsc::channel::<pm_core::domain::Intent>(8);
+    let (order_update_tx, _) = broadcast::channel::<pm_core::domain::OrderUpdate>(64);
+    let (settled_tx, _) = broadcast::channel::<pm_core::domain::Settled>(16);
+    let (redeemed_tx, redeemed_rx) = mpsc::channel::<Redeemed>(16);
+    let (pending_tx, pending_rx) = mpsc::channel::<PendingRedemption>(16);
+    let (_slot_tx, slot_rx) = watch::channel::<RoundSlotState>(RoundSlotState::Empty);
 
     let cancel = CancellationToken::new();
 
@@ -156,6 +163,9 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // 6. Warm up
+    let starting = client.balance().await?;
+    info!(balance = %starting.0, "starting USDC balance");
+    let bankroll = Arc::new(RwLock::new(BankrollState::new(starting)));
 
     // let price_feed = Box::new(adapters::chainlink_price_feed::ChainlinkPriceFeed::connect());
 
@@ -194,7 +204,7 @@ async fn main() -> anyhow::Result<()> {
     let h_poller = tokio::spawn(order_status_poller_task(
         client.clone(),
         store.clone(),
-        order_update_tx,
+        order_update_tx.clone(),
         slot_rx,
         cancel.clone(),
     ));
@@ -204,14 +214,31 @@ async fn main() -> anyhow::Result<()> {
         store.clone(),
         market_rx,
         tick_tx.subscribe(),
-        settled_tx,
+        settled_tx.clone(),
+        pending_tx,
         cancel.clone(),
     ));
 
     let h_persistence = tokio::spawn(persistence_task(
+        store.clone(),
+        order_update_tx.subscribe(),
+        settled_tx.subscribe(),
+        cancel.clone(),
+    ));
+
+    let h_bankroll = tokio::spawn(bankroll_task(
+        bankroll.clone(),
+        order_update_tx.subscribe(),
+        settled_tx.subscribe(),
+        redeemed_rx,
+        cancel.clone(),
+    ));
+
+    let h_redeem_poller = tokio::spawn(redeem_status_poller_task(
+        client.clone(),
         store,
-        order_update_rx,
-        settled_rx,
+        pending_rx,
+        redeemed_tx,
         cancel.clone(),
     ));
 
@@ -236,6 +263,8 @@ async fn main() -> anyhow::Result<()> {
     let _ = h_poller.await;
     let _ = h_settlement.await;
     let _ = h_persistence.await;
+    let _ = h_bankroll.await;
+    let _ = h_redeem_poller.await;
     let _ = h_heartbeat.await;
 
     info!("pm-bot shut down cleanly");

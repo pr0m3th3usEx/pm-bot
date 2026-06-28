@@ -125,6 +125,7 @@ impl PositionState {
                 | (Filled, Settling)
                 | (Settling, Won)
                 | (Settling, Lost)
+                | (Won, Redeemed)
         );
         if valid {
             Ok(Self(next))
@@ -166,9 +167,9 @@ impl BankrollState {
         self.bankroll.0 -= cost.0;
     }
 
-    pub fn update_on_settlement(&mut self, realized_pnl: Usdc) {
-        self.money_in_play.0 -= realized_pnl.0;
-        self.about_to_be_redeemed.0 += realized_pnl.0;
+    pub fn update_on_settlement(&mut self, cost: Usdc, realized_pnl: Usdc) {
+        self.money_in_play.0 -= cost.0;
+        self.about_to_be_redeemed.0 += cost.0 + realized_pnl.0;
     }
 
     pub fn update_on_redemption(&mut self, payout: Usdc) {
@@ -246,15 +247,23 @@ mod tests {
 
     #[test]
     fn bankroll_updates() {
+        // Win case: cost=10, pnl=+5 => money_in_play goes to 0, about_to_be_redeemed=15
         let mut b = BankrollState::new(Usdc(dec!(100)));
         b.update_on_fill(Usdc(dec!(10)));
         assert_eq!(b.bankroll, Usdc(dec!(90)));
         assert_eq!(b.money_in_play, Usdc(dec!(10)));
-        b.update_on_settlement(Usdc(dec!(5)));
-        assert_eq!(b.money_in_play, Usdc(dec!(5)));
-        assert_eq!(b.about_to_be_redeemed, Usdc(dec!(5)));
-        b.update_on_redemption(Usdc(dec!(5)));
-        assert_eq!(b.bankroll, Usdc(dec!(95)));
+        b.update_on_settlement(Usdc(dec!(10)), Usdc(dec!(5)));
+        assert_eq!(b.money_in_play, Usdc(dec!(0)));
+        assert_eq!(b.about_to_be_redeemed, Usdc(dec!(15)));
+        b.update_on_redemption(Usdc(dec!(15)));
+        assert_eq!(b.bankroll, Usdc(dec!(105)));
         assert_eq!(b.about_to_be_redeemed, Usdc(dec!(0)));
+
+        // Loss case: cost=10, pnl=-10 => money_in_play 0, about_to_be_redeemed 0
+        let mut b2 = BankrollState::new(Usdc(dec!(100)));
+        b2.update_on_fill(Usdc(dec!(10)));
+        b2.update_on_settlement(Usdc(dec!(10)), Usdc(dec!(-10)));
+        assert_eq!(b2.money_in_play, Usdc(dec!(0)));
+        assert_eq!(b2.about_to_be_redeemed, Usdc(dec!(0)));
     }
 }

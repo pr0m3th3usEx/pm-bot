@@ -1,7 +1,15 @@
-use crate::domain::{Intent, Market, PositionRecord, PositionUpdate, Tick};
+use crate::domain::{Intent, Market, PositionRecord, PositionUpdate, RedeemReceipt, Tick};
 use crate::error::Result;
 use crate::types::{MarketSlug, Price, Shares, Side, TokenId, Usdc};
 use async_trait::async_trait;
+
+/// Status of an in-flight relayer redemption transaction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RedemptionStatus {
+    Pending,
+    Confirmed,
+    Failed,
+}
 
 // ─── Price feed ──────────────────────────────────────────────────────────────
 
@@ -43,8 +51,14 @@ pub trait MarketClient: Send + Sync {
         position_id: i64,
     ) -> Result<crate::domain::OrderUpdate>;
 
-    /// Redeem a winning position. Returns pUSD received.
-    async fn redeem(&self, position: &PositionRecord) -> Result<Usdc>;
+    /// Redeem a winning position. Returns a receipt with optional transaction id and payout.
+    async fn redeem(&self, position: &PositionRecord) -> Result<RedeemReceipt>;
+
+    /// Check the on-chain status of a previously submitted redemption transaction.
+    async fn redemption_status(&self, transaction_id: &str) -> Result<RedemptionStatus>;
+
+    /// Return the current spendable USDC balance of the Safe wallet.
+    async fn balance(&self) -> Result<Usdc>;
 
     /// Heartbeat to keep the CLOB session alive. Returns the server timestamp.
     async fn heartbeat(&self) -> Result<()>;

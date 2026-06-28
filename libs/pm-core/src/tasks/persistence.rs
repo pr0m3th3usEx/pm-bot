@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use tokio::sync::mpsc;
+use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
@@ -9,8 +9,8 @@ use crate::types::{PositionStatus, Timestamp};
 
 pub async fn persistence_task(
     store: Arc<dyn Store>,
-    mut order_update_rx: mpsc::Receiver<OrderUpdate>,
-    mut settled_rx: mpsc::Receiver<Settled>,
+    mut order_update_rx: broadcast::Receiver<OrderUpdate>,
+    mut settled_rx: broadcast::Receiver<Settled>,
     cancel: CancellationToken,
 ) {
     info!("persistence_task started");
@@ -20,7 +20,15 @@ pub async fn persistence_task(
                 info!("persistence_task cancelled");
                 break;
             }
-            Some(update) = order_update_rx.recv() => {
+            result = order_update_rx.recv() => {
+                let update = match result {
+                    Ok(u) => u,
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        warn!(skipped = n, "persistence order_update_rx lagged");
+                        continue;
+                    }
+                    Err(broadcast::error::RecvError::Closed) => continue,
+                };
                 let (position_id, pu) = match update {
                     // Executor already persists Submitted inline; skip to avoid double-write.
                     OrderUpdate::Submitted { .. } => continue,
@@ -41,7 +49,15 @@ pub async fn persistence_task(
                     error!(position_id, error = %e, "failed to persist order update");
                 }
             }
-            Some(settled) = settled_rx.recv() => {
+            result = settled_rx.recv() => {
+                let settled = match result {
+                    Ok(s) => s,
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        warn!(skipped = n, "persistence settled_rx lagged");
+                        continue;
+                    }
+                    Err(broadcast::error::RecvError::Closed) => continue,
+                };
                 let pu = match settled.status {
                     PositionStatus::Won => PositionUpdate::Won {
                         realized_pnl: settled.realized_pnl,

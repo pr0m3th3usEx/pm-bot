@@ -4,7 +4,7 @@ use tokio::sync::{broadcast, mpsc, watch};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
-use crate::domain::{ActiveMarket, PositionUpdate, Settled, Tick};
+use crate::domain::{ActiveMarket, PendingRedemption, PositionUpdate, Settled, Tick};
 use crate::ports::{MarketClient, Store};
 use crate::types::{MarketStatus, Outcome, PositionStatus, Price, Timestamp, Usdc};
 
@@ -24,7 +24,8 @@ async fn handle_settlement(
     store: &Arc<dyn Store>,
     market: &ActiveMarket,
     resolution_price: Option<Price>,
-    settled_tx: &mpsc::Sender<Settled>,
+    settled_tx: &broadcast::Sender<Settled>,
+    pending_tx: &mpsc::Sender<PendingRedemption>,
 ) {
     // Need both a strike and a resolution price to decide outcomes.
     let Some(strike) = market.strike.clone() else {
@@ -66,7 +67,10 @@ async fn handle_settlement(
         let won = pos.outcome_name == winning.as_str();
 
         // Cost basis from the actual fill (fall back to limit price defensively).
-        let entry = pos.avg_price.clone().unwrap_or_else(|| pos.limit_price.clone());
+        let entry = pos
+            .avg_price
+            .clone()
+            .unwrap_or_else(|| pos.limit_price.clone());
         let cost = entry.0 * pos.shares.0;
 
         // Filled → Settling before any terminal write (crash-recoverable marker).
@@ -85,24 +89,37 @@ async fn handle_settlement(
 
         if won {
             match client.redeem(&pos).await {
-                Ok(payout) => {
-                    let pnl = payout.0 - cost; // net profit
+                Ok(receipt) => {
+                    let pnl = receipt.payout.0 - cost; // net profit
                     info!(
                         position_id,
                         outcome = %pos.outcome_name,
                         shares = %pos.shares.0,
                         cost = %cost,
-                        payout = %payout.0,
+                        payout = %receipt.payout.0,
                         profit = %pnl,
                         "position WON — redeemed"
                     );
-                    let _ = settled_tx
-                        .send(Settled {
+                    let _ = settled_tx.send(Settled {
+                        position_id,
+                        status: PositionStatus::Won,
+                        realized_pnl: Usdc(pnl),
+                        cost: Usdc(cost),
+                    });
+                    if let Some(tx_id) = receipt.transaction_id {
+                        let _ = pending_tx
+                            .send(PendingRedemption {
+                                position_id,
+                                transaction_id: tx_id,
+                                payout: receipt.payout,
+                            })
+                            .await;
+                    } else {
+                        warn!(
                             position_id,
-                            status: PositionStatus::Won,
-                            realized_pnl: Usdc(pnl),
-                        })
-                        .await;
+                            "redeem returned no transaction_id; cannot confirm redemption"
+                        );
+                    }
                 }
                 Err(e) => {
                     error!(position_id, error = %e, "redeem failed; position left in Settling")
@@ -118,13 +135,12 @@ async fn handle_settlement(
                 loss = %cost,
                 "position LOST — no redeem"
             );
-            let _ = settled_tx
-                .send(Settled {
-                    position_id,
-                    status: PositionStatus::Lost,
-                    realized_pnl: Usdc(pnl),
-                })
-                .await;
+            let _ = settled_tx.send(Settled {
+                position_id,
+                status: PositionStatus::Lost,
+                realized_pnl: Usdc(pnl),
+                cost: Usdc(cost),
+            });
         }
     }
 }
@@ -134,7 +150,8 @@ pub async fn settlement_task(
     store: Arc<dyn Store>,
     mut market_rx: watch::Receiver<Option<ActiveMarket>>,
     mut tick_rx: broadcast::Receiver<Tick>,
-    settled_tx: mpsc::Sender<Settled>,
+    settled_tx: broadcast::Sender<Settled>,
+    pending_tx: mpsc::Sender<PendingRedemption>,
     cancel: CancellationToken,
 ) {
     info!("settlement_task started");
@@ -181,7 +198,7 @@ pub async fn settlement_task(
                         let price = cutoff_price
                             .take()
                             .or_else(|| resolution_price(&ticks, market.closes_at));
-                        handle_settlement(&client, &store, &market, price, &settled_tx).await;
+                        handle_settlement(&client, &store, &market, price, &settled_tx, &pending_tx).await;
                     }
                     _ => {}
                 }
