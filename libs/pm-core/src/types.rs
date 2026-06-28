@@ -108,6 +108,7 @@ pub enum PositionStatus {
     Lost,
     Rejected,
     Cancelled,
+    Redeemed,
 }
 
 impl PositionStatus {
@@ -120,6 +121,7 @@ impl PositionStatus {
             Self::Lost => "lost",
             Self::Rejected => "rejected",
             Self::Cancelled => "cancelled",
+            Self::Redeemed => "redeemed",
         }
     }
 
@@ -128,11 +130,11 @@ impl PositionStatus {
         matches!(self, Self::Won | Self::Lost)
     }
 
-    /// True for Won/Lost/Rejected/Cancelled.
+    /// True for Won/Lost/Rejected/Cancelled/Redeemed.
     pub fn is_terminal(self) -> bool {
         matches!(
             self,
-            Self::Won | Self::Lost | Self::Rejected | Self::Cancelled
+            Self::Won | Self::Lost | Self::Rejected | Self::Cancelled | Self::Redeemed
         )
     }
 }
@@ -148,6 +150,7 @@ impl FromStr for PositionStatus {
             "lost" => Ok(Self::Lost),
             "rejected" => Ok(Self::Rejected),
             "cancelled" => Ok(Self::Cancelled),
+            "redeemed" => Ok(Self::Redeemed),
             other => Err(crate::error::CoreError::UnknownVariant(other.to_owned())),
         }
     }
@@ -177,6 +180,7 @@ pub const STATUS_CHECK_VALUES: &[&str] = &[
     "lost",
     "rejected",
     "cancelled",
+    "redeemed",
 ];
 
 #[cfg(test)]
@@ -210,6 +214,7 @@ mod drift_tests {
             PositionStatus::Lost,
             PositionStatus::Rejected,
             PositionStatus::Cancelled,
+            PositionStatus::Redeemed,
         ];
         for v in variants {
             assert!(

@@ -67,14 +67,11 @@ async fn main() {
 
     // Print the authenticated user's safe address
     let safe_address = derive_safe_wallet(address, POLYGON).expect("invalid address");
-    println!(
-        "Authenticated user's proxy address: {:?}",
-        safe_address
-    );
+    println!("Authenticated user's proxy address: {:?}", safe_address);
 
-    /// (TEST CODE) Redeem a position 
+    /// (TEST CODE) Redeem a position
     let condition_id = "0xfb3d98e9e007bd2bec40e442a83e0457b1c935b37a5c43721ab4e11e9843fdc3";
-    
+
     let position = PositionRecord {
         id: Some(123456789),
         order_id: Some("order_123456789".to_string()),
@@ -85,7 +82,12 @@ async fn main() {
         market_slug: MarketSlug("btc-updown-5m-1782576900".to_string()),
         side: Side::Buy,
         outcome_name: "Down".to_string(),
-        token_id: TokenId(U256::from_str("4262301778608766021907538487857903854184338853146158900275888636048660731688").expect("Invalid token ID")),
+        token_id: TokenId(
+            U256::from_str(
+                "4262301778608766021907538487857903854184338853146158900275888636048660731688",
+            )
+            .expect("Invalid token ID"),
+        ),
         strike: Some(Price(dec!(60656.423699213774))),
         realized_pnl: None,
         status: PositionStatus::Filled,
@@ -93,26 +95,18 @@ async fn main() {
         updated_at: pm_core::types::Timestamp(1682576900000),
     };
 
-    let relayer_api_key = std::env::var("RELAYER_API_KEY")
-        .expect("RELAYER_API_KEY must be set in the .env file");
+    let relayer_api_key =
+        std::env::var("RELAYER_API_KEY").expect("RELAYER_API_KEY must be set in the .env file");
 
-    let client = ClobMarketClient::new(clob_client, signer, safe_address, relayer_api_key);
+    let rpc_url = std::env::var("POLYGON_RPC_URL").unwrap_or_default();
+    let client = ClobMarketClient::new(clob_client, signer, safe_address, relayer_api_key, rpc_url);
 
-
-
-    let response =  client.redeem(&position).await.expect("error redeeming position");
+    let response = client
+        .redeem(&position)
+        .await
+        .expect("error redeeming position");
 
     println!("Redeem response: {:?}", response);
-
-
-
-
-
-
-
-
-
-
 
     // // Get public profile data
     // let gamma_client = GammaClient::new("https://gamma-api.polymarket.com")

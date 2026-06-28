@@ -69,6 +69,9 @@ impl Store for MockStore {
                 rec.status = PositionStatus::Lost;
                 rec.realized_pnl = Some(realized_pnl.clone());
             }
+            PositionUpdate::Redeemed { .. } => {
+                rec.status = PositionStatus::Redeemed;
+            }
         }
         rec.updated_at = now;
         Ok(())

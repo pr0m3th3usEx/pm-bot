@@ -83,6 +83,29 @@ pub struct Settled {
     pub position_id: i64,
     pub status: PositionStatus,
     pub realized_pnl: Usdc,
+    pub cost: Usdc,
+}
+
+/// Returned by `MarketClient::redeem` — carries the relayer transaction id (if any) and payout.
+#[derive(Debug, Clone)]
+pub struct RedeemReceipt {
+    pub transaction_id: Option<String>,
+    pub payout: Usdc,
+}
+
+/// Sent to the redeem_status_poller when a redeem has been submitted but not yet confirmed.
+#[derive(Debug, Clone)]
+pub struct PendingRedemption {
+    pub position_id: i64,
+    pub transaction_id: String,
+    pub payout: Usdc,
+}
+
+/// Emitted by the redeem_status_poller once a redemption is confirmed on-chain.
+#[derive(Debug, Clone)]
+pub struct Redeemed {
+    pub position_id: i64,
+    pub payout: Usdc,
 }
 
 // ─── Persistence types ───────────────────────────────────────────────────────
@@ -134,6 +157,9 @@ pub enum PositionUpdate {
     },
     Lost {
         realized_pnl: Usdc,
+        updated_at: Timestamp,
+    },
+    Redeemed {
         updated_at: Timestamp,
     },
 }

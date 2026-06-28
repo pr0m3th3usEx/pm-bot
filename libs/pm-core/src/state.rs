@@ -1,5 +1,7 @@
+use rust_decimal_macros::dec;
+
 use crate::error::{CoreError, Result};
-use crate::types::MarketStatus;
+use crate::types::{MarketStatus, Usdc};
 
 // ─── 1. Round slot (one-position-per-round invariant) ─────────────────────────
 
@@ -123,6 +125,7 @@ impl PositionState {
                 | (Filled, Settling)
                 | (Settling, Won)
                 | (Settling, Lost)
+                | (Won, Redeemed)
         );
         if valid {
             Ok(Self(next))
@@ -138,6 +141,46 @@ impl PositionState {
 impl Default for PositionState {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// 4. Bankroll state: Tracks the bot's current bankroll (pUSD), current money-in-play, and about to be-redeemed pUSD. This is used to compute the Kelly fraction for sizing new positions.
+/// The bankroll is updated on every position fill, settlement, and redemption.
+/// The money-in-play is updated on every position fill and settlement. The about-to-be-redeemed pUSD is updated on every position settlement and redemption.
+pub struct BankrollState {
+    pub bankroll: Usdc,
+    pub money_in_play: Usdc,
+    pub about_to_be_redeemed: Usdc,
+}
+
+impl BankrollState {
+    pub fn new(bankroll: Usdc) -> Self {
+        Self {
+            bankroll,
+            money_in_play: Usdc(dec!(0)),
+            about_to_be_redeemed: Usdc(dec!(0)),
+        }
+    }
+
+    pub fn update_on_fill(&mut self, cost: Usdc) {
+        self.money_in_play.0 += cost.0;
+        self.bankroll.0 -= cost.0;
+    }
+
+    pub fn update_on_settlement(&mut self, cost: Usdc, realized_pnl: Usdc) {
+        self.money_in_play.0 -= cost.0;
+        self.about_to_be_redeemed.0 += cost.0 + realized_pnl.0;
+    }
+
+    pub fn update_on_redemption(&mut self, payout: Usdc) {
+        self.bankroll.0 += payout.0;
+        self.about_to_be_redeemed.0 -= payout.0;
+    }
+}
+
+impl Default for BankrollState {
+    fn default() -> Self {
+        Self::new(Usdc(dec!(0)))
     }
 }
 
@@ -200,5 +243,27 @@ mod tests {
     fn position_illegal_transition() {
         let s = PositionState::new(); // Submitted
         assert!(s.transition(Won).is_err());
+    }
+
+    #[test]
+    fn bankroll_updates() {
+        // Win case: cost=10, pnl=+5 => money_in_play goes to 0, about_to_be_redeemed=15
+        let mut b = BankrollState::new(Usdc(dec!(100)));
+        b.update_on_fill(Usdc(dec!(10)));
+        assert_eq!(b.bankroll, Usdc(dec!(90)));
+        assert_eq!(b.money_in_play, Usdc(dec!(10)));
+        b.update_on_settlement(Usdc(dec!(10)), Usdc(dec!(5)));
+        assert_eq!(b.money_in_play, Usdc(dec!(0)));
+        assert_eq!(b.about_to_be_redeemed, Usdc(dec!(15)));
+        b.update_on_redemption(Usdc(dec!(15)));
+        assert_eq!(b.bankroll, Usdc(dec!(105)));
+        assert_eq!(b.about_to_be_redeemed, Usdc(dec!(0)));
+
+        // Loss case: cost=10, pnl=-10 => money_in_play 0, about_to_be_redeemed 0
+        let mut b2 = BankrollState::new(Usdc(dec!(100)));
+        b2.update_on_fill(Usdc(dec!(10)));
+        b2.update_on_settlement(Usdc(dec!(10)), Usdc(dec!(-10)));
+        assert_eq!(b2.money_in_play, Usdc(dec!(0)));
+        assert_eq!(b2.about_to_be_redeemed, Usdc(dec!(0)));
     }
 }

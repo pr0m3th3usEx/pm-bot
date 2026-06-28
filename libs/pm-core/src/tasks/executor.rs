@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{broadcast, mpsc, watch};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
@@ -14,7 +14,7 @@ pub async fn executor_task(
     store: Arc<dyn Store>,
     mut market_rx: watch::Receiver<Option<ActiveMarket>>,
     mut intent_rx: mpsc::Receiver<Intent>,
-    order_update_tx: mpsc::Sender<OrderUpdate>,
+    order_update_tx: broadcast::Sender<OrderUpdate>,
     slot_tx: watch::Sender<RoundSlotState>,
     cancel: CancellationToken,
 ) {
@@ -115,7 +115,7 @@ pub async fn executor_task(
                                 let _ = order_update_tx.send(OrderUpdate::Submitted {
                                     order_id: order_id.clone(),
                                     position_id,
-                                }).await;
+                                });
                                 // Also update the order_id in the store.
                                 let _ = store.update_position(position_id, &PositionUpdate::Submitted {
                                     order_id,

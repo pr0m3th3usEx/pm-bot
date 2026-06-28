@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::mpsc;
+use tokio::sync::broadcast;
 use tokio::sync::watch;
 use tokio::time::MissedTickBehavior;
 use tokio_util::sync::CancellationToken;
@@ -14,7 +14,7 @@ use crate::state::RoundSlotState;
 async fn run_poll(
     client: Arc<dyn MarketClient>,
     store: Arc<dyn Store>,
-    order_update_tx: mpsc::Sender<OrderUpdate>,
+    order_update_tx: broadcast::Sender<OrderUpdate>,
     mut slot_rx: watch::Receiver<RoundSlotState>,
 ) {
     // position_ids whose order_id we haven't resolved yet (race with executor's store write)
@@ -69,8 +69,8 @@ async fn run_poll(
                                     | OrderUpdate::Cancelled { .. }
                             );
                             info!(position_id = pid, order_id = %oid, update = ?update, "order status received");
-                            if order_update_tx.send(update).await.is_err() {
-                                return; // persistence task gone; nothing left to do
+                            if order_update_tx.send(update).is_err() {
+                                return; // no receivers left; nothing left to do
                             }
                             if terminal {
                                 done.push(pid);
@@ -92,7 +92,7 @@ async fn run_poll(
 pub async fn order_status_poller_task(
     client: Arc<dyn MarketClient>,
     store: Arc<dyn Store>,
-    order_update_tx: mpsc::Sender<OrderUpdate>,
+    order_update_tx: broadcast::Sender<OrderUpdate>,
     slot_rx: watch::Receiver<RoundSlotState>,
     cancel: CancellationToken,
 ) {
