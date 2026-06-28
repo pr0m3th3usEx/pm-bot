@@ -13,6 +13,7 @@ use std::time::Duration;
 
 use adapters::clob_market_client::{ClobMarketClient, CLOB_API_URL};
 use adapters::gamma_market_catalog::{GammaMarketCatalog, GAMMA_API_URL};
+use pm_core::tasks::price_feed::price_feed_task;
 use tokio::sync::{broadcast, mpsc, watch};
 use tokio_util::sync::CancellationToken;
 use tracing::info;
@@ -167,11 +168,11 @@ async fn main() -> anyhow::Result<()> {
     info!(balance = %starting.0, "starting USDC balance");
     let bankroll = Arc::new(RwLock::new(BankrollState::new(starting)));
 
-    // let price_feed = Box::new(adapters::chainlink_price_feed::ChainlinkPriceFeed::connect());
+    let price_feed = Box::new(adapters::chainlink_price_feed::ChainlinkPriceFeed::connect());
 
     // 6. Spawn tasks.
     // TODO: wire ChainlinkPriceFeed (V1 price source; V2 may aggregate multiple feeds)
-    // let h_price = tokio::spawn(price_feed_task(price_feed, tick_tx, cancel.clone()));
+    let h_price = tokio::spawn(price_feed_task(price_feed, tick_tx.clone(), cancel.clone()));
 
     let h_market = tokio::spawn(market_rotation_task(
         clock,
@@ -256,7 +257,7 @@ async fn main() -> anyhow::Result<()> {
     cancel.cancel();
 
     // Join all handles (ignore individual errors — tasks log their own).
-    // let _ = h_price.await;
+    let _ = h_price.await;
     let _ = h_market.await;
     // let _ = h_decision.await;
     // let _ = h_executor.await;

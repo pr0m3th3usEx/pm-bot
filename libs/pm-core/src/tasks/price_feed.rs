@@ -20,7 +20,7 @@ pub async fn price_feed_task(
             result = feed.next_tick() => {
                 match result {
                     Ok(tick) => {
-                        tracing::trace!(price = %tick.price.0, "tick");
+                        tracing::debug!(price = %tick.price.0, timestamp = %tick.at.0, "tick");
                         // Ignore SendError — receivers may have lagged
                         let _ = tick_tx.send(tick);
                     }
