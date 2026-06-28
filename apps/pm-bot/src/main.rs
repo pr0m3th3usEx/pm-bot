@@ -176,7 +176,7 @@ async fn main() -> anyhow::Result<()> {
         cancel.clone(),
     ));
 
-    let h_executor = tokio::spawn(executor_task(
+    let _h_executor = tokio::spawn(executor_task(
         policy,
         client.clone(),
         store.clone(),
@@ -245,7 +245,7 @@ async fn main() -> anyhow::Result<()> {
     let _ = h_price.await;
     let _ = h_market.await;
     let _ = h_decision.await;
-    let _ = h_executor.await;
+    // let _ = h_executor.await;
     let _ = h_poller.await;
     let _ = h_settlement.await;
     let _ = h_persistence.await;
