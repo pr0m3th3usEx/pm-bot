@@ -145,6 +145,10 @@ impl Store for SqliteStore {
                 "UPDATE positions SET status='lost', realized_pnl=?1, updated_at=?2 WHERE id=?3",
                 params![dec_to_text(&realized_pnl.0), updated_at.0, id],
             ),
+            PositionUpdate::Redeemed { updated_at } => conn.execute(
+                "UPDATE positions SET status='redeemed', updated_at=?1 WHERE id=?2",
+                params![updated_at.0, id],
+            ),
         }
         .map_err(|e| CoreError::Store(e.to_string()))?;
         Ok(())

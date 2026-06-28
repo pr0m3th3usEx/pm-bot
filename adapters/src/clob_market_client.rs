@@ -1,13 +1,14 @@
 use alloy::{
     primitives::{hex as alloy_hex, Address, B256, U256},
+    providers::{Provider, ProviderBuilder},
     sol,
     sol_types::{eip712_domain, SolCall, SolStruct},
 };
 use async_trait::async_trait;
 use pm_core::{
-    domain::{Intent, OrderUpdate, PositionRecord},
+    domain::{Intent, OrderUpdate, PositionRecord, RedeemReceipt},
     error::{CoreError, Result},
-    ports::MarketClient,
+    ports::{MarketClient, RedemptionStatus},
     types::{Price, Shares, Side, TokenId, Usdc},
 };
 use polymarket_client_sdk_v2::{
@@ -32,6 +33,8 @@ sol! {
         bytes32 conditionId,
         uint256[] indexSets
     );
+
+    function balanceOf(address account) returns (uint256);
 
     #[derive(Debug)]
     struct SafeTx {
@@ -60,6 +63,11 @@ struct RelayerSubmitResponse {
     transaction_id: Option<String>,
 }
 
+#[derive(Deserialize)]
+struct RelayerTxStatus {
+    state: String,
+}
+
 pub struct ClobMarketClient<K, Sgn>
 where
     K: Kind + Send + Sync,
@@ -70,6 +78,7 @@ where
     safe_address: Address,
     http: reqwest::Client,
     relayer_api_key: String,
+    rpc_url: String,
 }
 
 impl<K, Sgn> ClobMarketClient<K, Sgn>
@@ -82,6 +91,7 @@ where
         signer: Sgn,
         safe_address: Address,
         relayer_api_key: String,
+        rpc_url: String,
     ) -> Self {
         Self {
             client,
@@ -89,6 +99,7 @@ where
             safe_address,
             http: reqwest::Client::new(),
             relayer_api_key,
+            rpc_url,
         }
     }
 }
@@ -183,7 +194,7 @@ where
         }
     }
 
-    async fn redeem(&self, position: &PositionRecord) -> Result<Usdc> {
+    async fn redeem(&self, position: &PositionRecord) -> Result<RedeemReceipt> {
         let adapter: Address = COLLATERAL_ADAPTER
             .parse()
             .map_err(|e| CoreError::Adapter(format!("bad adapter address: {e}")))?;
@@ -348,8 +359,66 @@ where
             "redeemPositions submitted to relayer"
         );
 
-        // 7. Return gross payout: 1 USDC per winning share.
-        Ok(Usdc(position.shares.0))
+        // 7. Return receipt: 1 USDC per winning share (gross payout).
+        Ok(RedeemReceipt {
+            transaction_id: resp.transaction_id,
+            payout: Usdc(position.shares.0),
+        })
+    }
+
+    async fn redemption_status(&self, transaction_id: &str) -> Result<RedemptionStatus> {
+        let signer_address = PmSigner::address(&self.signer);
+        let resp = self
+            .http
+            .get(format!("{RELAYER_URL}/transaction"))
+            .query(&[("id", transaction_id)])
+            .header("RELAYER_API_KEY", &self.relayer_api_key)
+            .header("RELAYER_API_KEY_ADDRESS", format!("{signer_address:#x}"))
+            .send()
+            .await
+            .map_err(|e| CoreError::Adapter(format!("redemption_status request failed: {e}")))?
+            .json::<Vec<RelayerTxStatus>>()
+            .await
+            .map_err(|e| CoreError::Adapter(format!("redemption_status parse failed: {e}")))?;
+
+        let status = match resp.first().map(|s| s.state.as_str()) {
+            Some("STATE_CONFIRMED") => RedemptionStatus::Confirmed,
+            Some("STATE_INVALID") | Some("STATE_FAILED") => RedemptionStatus::Failed,
+            _ => RedemptionStatus::Pending,
+        };
+        Ok(status)
+    }
+
+    async fn balance(&self) -> Result<Usdc> {
+        let rpc_url: reqwest::Url = self
+            .rpc_url
+            .parse()
+            .map_err(|e| CoreError::Adapter(format!("invalid rpc_url: {e}")))?;
+        let provider = ProviderBuilder::new().connect_http(rpc_url);
+
+        let token: Address = COLLATERAL_TOKEN
+            .parse()
+            .map_err(|e| CoreError::Adapter(format!("bad collateral token address: {e}")))?;
+
+        let call = balanceOfCall { account: self.safe_address };
+        let call_data = call.abi_encode();
+
+        let tx = alloy::rpc::types::TransactionRequest::default()
+            .to(token)
+            .input(call_data.into());
+
+        let raw = provider
+            .call(tx)
+            .await
+            .map_err(|e| CoreError::Adapter(format!("balanceOf call failed: {e}")))?;
+
+        let raw_u256 = U256::from_be_slice(&raw);
+        // USDC has 6 decimals; convert raw units to a Decimal
+        let divisor = rust_decimal::Decimal::from(1_000_000u64);
+        let amount = rust_decimal::Decimal::from_str_exact(&raw_u256.to_string())
+            .map_err(|e| CoreError::Adapter(format!("balance decimal parse failed: {e}")))?
+            / divisor;
+        Ok(Usdc(amount))
     }
 
     async fn heartbeat(&self) -> Result<()> {
@@ -366,7 +435,7 @@ mod tests {
     use super::ClobMarketClient;
     use pm_core::{
         domain::OrderUpdate,
-        ports::MarketClient,
+        ports::{MarketClient, RedemptionStatus},
         types::{Side, TokenId},
     };
     use polymarket_client_sdk_v2::{
@@ -399,7 +468,14 @@ mod tests {
             .expect("CLOB authentication failed");
         let safe = derive_safe_wallet(clob.address(), POLYGON)
             .expect("failed to derive safe wallet address");
-        Some(Box::new(ClobMarketClient::new(clob, signer, safe, relayer_api_key)))
+        let rpc_url = std::env::var("POLYGON_RPC_URL").unwrap_or_default();
+        Some(Box::new(ClobMarketClient::new(
+            clob,
+            signer,
+            safe,
+            relayer_api_key,
+            rpc_url,
+        )))
     }
 
     #[tokio::test]
@@ -489,5 +565,46 @@ mod tests {
         };
         assert_eq!(embedded_order_id, &order_id);
         assert_eq!(*embedded_pos_id, 0i64);
+    }
+
+    #[tokio::test]
+    async fn redemption_status_returns_known_state() {
+        let Some(client) = build_client().await else {
+            return;
+        };
+        // A real relayer transaction id; override with POLYMARKET_REDEMPTION_TX_ID.
+        if std::env::var("POLYMARKET_REDEMPTION_TX_ID").is_err() {
+            println!("[SKIP] POLYMARKET_REDEMPTION_TX_ID not set");
+            return;
+        }
+
+        let tx_id = std::env::var("POLYMARKET_REDEMPTION_TX_ID").expect("POLYMARKET_REDEMPTION_TX_ID not set");
+        let status = client
+            .redemption_status(&tx_id)
+            .await
+            .expect("redemption_status failed");
+        println!("redemption_status({tx_id}) = {status:?}");
+        assert!(matches!(
+            status,
+            RedemptionStatus::Pending | RedemptionStatus::Confirmed | RedemptionStatus::Failed
+        ));
+    }
+
+    #[tokio::test]
+    async fn balance_returns_non_negative_amount() {
+        let Some(client) = build_client().await else {
+            return;
+        };
+        if std::env::var("POLYGON_RPC_URL").is_err() {
+            println!("[SKIP] POLYGON_RPC_URL not set");
+            return;
+        }
+        let balance = client.balance().await.expect("balance failed");
+    
+        assert!(
+            balance.0 >= rust_decimal::Decimal::ZERO,
+            "balance must be >= 0, got {:?}",
+            balance
+        );
     }
 }
