@@ -108,6 +108,8 @@ pub trait Store: Send + Sync {
     /// All positions that have not yet reached a terminal status.
     async fn open_positions(&self) -> Result<Vec<PositionRecord>>;
 
-    /// (wins, resolved) — used to compute success rate. `resolved` = Won + Lost.
+    /// (wins, resolved) — used to compute success/win rate. A position counts as
+    /// a win once it is `Won` *or* `Redeemed` (a redeemed position is a past
+    /// winner). `resolved` = wins + losses = Won + Redeemed + Lost.
     async fn success_rate_counts(&self) -> Result<(u64, u64)>;
 }

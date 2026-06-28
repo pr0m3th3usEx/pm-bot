@@ -5,6 +5,7 @@ use tracing::{error, info, warn};
 
 use crate::domain::{OrderUpdate, PositionUpdate, Settled};
 use crate::ports::Store;
+use crate::stats::WinLossStats;
 use crate::types::{PositionStatus, Timestamp};
 
 pub async fn persistence_task(
@@ -72,8 +73,20 @@ pub async fn persistence_task(
                         continue;
                     }
                 };
-                if let Err(e) = store.update_position(settled.position_id, &pu).await {
-                    error!(position_id = settled.position_id, error = %e, "failed to persist settled event");
+                match store.update_position(settled.position_id, &pu).await {
+                    Err(e) => {
+                        error!(position_id = settled.position_id, error = %e, "failed to persist settled event");
+                    }
+                    Ok(()) => {
+                        // Settled write has landed — report the running win/loss tally
+                        // from the store, with the just-settled position included.
+                        match store.success_rate_counts().await {
+                            Ok((wins, resolved)) => {
+                                WinLossStats::from_counts(wins, resolved).log("after-settlement");
+                            }
+                            Err(e) => warn!(error = %e, "failed to read win/loss counts after settlement"),
+                        }
+                    }
                 }
             }
         }

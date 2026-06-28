@@ -133,18 +133,18 @@ async fn main() -> anyhow::Result<()> {
     let cancel = CancellationToken::new();
 
     // // 5. Wait until next window start.
-    // let now_secs = std::time::SystemTime::now()
-    //     .duration_since(std::time::UNIX_EPOCH)?
-    //     .as_secs();
-    // let next_window = clock.next_window_ts(now_secs);
-    // let wait_ms = (next_window.0 - pm_core::types::Timestamp::now_ms().0).max(0) as u64;
-    // if wait_ms > 0 {
-    //     info!(
-    //         wait_secs = wait_ms / 1000,
-    //         "waiting for next window to start trading"
-    //     );
-    //     tokio::time::sleep(Duration::from_millis(wait_ms)).await;
-    // }
+    let now_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_secs();
+    let next_window = clock.next_window_ts(now_secs);
+    let wait_ms = (next_window.0 - pm_core::types::Timestamp::now_ms().0).max(0) as u64;
+    if wait_ms > 0 {
+        info!(
+            wait_secs = wait_ms / 1000,
+            "waiting for next window to start trading"
+        );
+        tokio::time::sleep(Duration::from_millis(wait_ms)).await;
+    }
 
     // 6. Warm up
     let starting = client.balance().await?;
@@ -222,7 +222,7 @@ async fn main() -> anyhow::Result<()> {
 
     let h_redeem_poller = tokio::spawn(redeem_status_poller_task(
         client.clone(),
-        store,
+        store.clone(),
         pending_rx,
         redeemed_tx,
         cancel.clone(),
@@ -252,6 +252,14 @@ async fn main() -> anyhow::Result<()> {
     let _ = h_bankroll.await;
     let _ = h_redeem_poller.await;
     let _ = h_heartbeat.await;
+
+    // Final win/loss summary from the store before exiting.
+    match store.success_rate_counts().await {
+        Ok((wins, resolved)) => {
+            pm_core::stats::WinLossStats::from_counts(wins, resolved).log("final")
+        }
+        Err(e) => tracing::warn!(error = %e, "failed to read final win/loss counts"),
+    }
 
     info!("pm-bot shut down cleanly");
     Ok(())

@@ -95,15 +95,23 @@ impl Store for MockStore {
             .inner
             .lock()
             .map_err(|e| CoreError::Store(e.to_string()))?;
+        // A redeemed position is a past winner, so it counts as a win.
         let wins = inner
             .positions
             .iter()
-            .filter(|r| r.status == PositionStatus::Won)
+            .filter(|r| {
+                matches!(r.status, PositionStatus::Won | PositionStatus::Redeemed)
+            })
             .count() as u64;
         let resolved = inner
             .positions
             .iter()
-            .filter(|r| r.status.is_resolved())
+            .filter(|r| {
+                matches!(
+                    r.status,
+                    PositionStatus::Won | PositionStatus::Redeemed | PositionStatus::Lost
+                )
+            })
             .count() as u64;
         Ok((wins, resolved))
     }

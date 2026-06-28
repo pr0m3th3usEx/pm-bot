@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS positions (
     avg_price    TEXT,
     strike       TEXT,
     status       TEXT    NOT NULL CHECK(status IN (
-                     'submitted','filled','settling','won','lost','rejected','cancelled')),
+                     'submitted','filled','settling','won','lost','rejected','cancelled','redeemed')),
     realized_pnl TEXT,
     submitted_at INTEGER NOT NULL,
     updated_at   INTEGER NOT NULL
@@ -232,9 +232,10 @@ impl Store for SqliteStore {
             .map_err(|e| CoreError::Store(e.to_string()))?;
         let (wins, resolved): (u64, u64) = conn
             .query_row(
+                // A redeemed position is a past winner, so it counts as a win.
                 "SELECT
-                 CAST(SUM(CASE WHEN status='won' THEN 1 ELSE 0 END) AS INTEGER),
-                 CAST(SUM(CASE WHEN status IN ('won','lost') THEN 1 ELSE 0 END) AS INTEGER)
+                 CAST(SUM(CASE WHEN status IN ('won','redeemed') THEN 1 ELSE 0 END) AS INTEGER),
+                 CAST(SUM(CASE WHEN status IN ('won','redeemed','lost') THEN 1 ELSE 0 END) AS INTEGER)
              FROM positions",
                 [],
                 |row| {
@@ -295,6 +296,20 @@ mod tests {
                 &PositionUpdate::Won {
                     realized_pnl: Usdc(dec!(4.5)),
                     updated_at: Timestamp(2_000_000),
+                },
+            )
+            .await
+            .unwrap();
+
+        let (wins, resolved) = store.success_rate_counts().await.unwrap();
+        assert_eq!((wins, resolved), (1, 1));
+
+        // A redeemed position is a past winner: it must still count as a win.
+        store
+            .update_position(
+                id,
+                &PositionUpdate::Redeemed {
+                    updated_at: Timestamp(3_000_000),
                 },
             )
             .await

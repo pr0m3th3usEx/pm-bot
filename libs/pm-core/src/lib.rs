@@ -3,6 +3,7 @@ pub mod domain;
 pub mod error;
 pub mod ports;
 pub mod state;
+pub mod stats;
 pub mod strategy;
 pub mod tasks;
 pub mod types;
