@@ -13,6 +13,7 @@ use std::time::Duration;
 
 use adapters::clob_market_client::{ClobMarketClient, CLOB_API_URL};
 use adapters::gamma_market_catalog::GammaMarketCatalog;
+use pm_core::tasks::decision_center::decision_center_task;
 use pm_core::tasks::price_feed::price_feed_task;
 use tokio::sync::{broadcast, mpsc, watch};
 use tokio_util::sync::CancellationToken;
@@ -25,36 +26,20 @@ use pm_core::{
     domain::{ActiveMarket, PendingRedemption, Redeemed},
     ports::{Admission, EntryPolicy},
     state::{BankrollState, RoundSlotState},
-    strategy::V1BasicStrategy,
     tasks::{
         bankroll::bankroll_task, heartbeat::heartbeat_task, market_rotation::market_rotation_task,
         order_status_poller::order_status_poller_task, persistence::persistence_task,
         redeem_status_poller::redeem_status_poller_task, settlement::settlement_task,
     },
-    types::Shares,
 };
+use pm_strategy::sizing::{FixedFractionSizingModel, SIZING_FRACTION};
+use pm_strategy::strategy::V1BasicStrategy;
 use tokio::sync::RwLock;
 
 use polymarket_client_sdk_v2::auth::{LocalSigner, Signer};
 use polymarket_client_sdk_v2::clob::types::SignatureType;
 use polymarket_client_sdk_v2::clob::{Client as ClobClient, Config};
 use polymarket_client_sdk_v2::{derive_safe_wallet, POLYGON};
-
-// ─── V1 fixed sizing model ────────────────────────────────────────────────────
-
-struct FixedSizingModel {
-    shares: Shares,
-}
-
-impl pm_core::ports::SizingModel for FixedSizingModel {
-    fn size(
-        &self,
-        _bankroll: &pm_core::types::Usdc,
-        _limit_price: &pm_core::types::Price,
-    ) -> Shares {
-        self.shares.clone()
-    }
-}
 
 // ─── V1 entry policy: max one open position per round ─────────────────────────
 
@@ -130,16 +115,15 @@ async fn main() -> anyhow::Result<()> {
         120, // enter within 2 minutes of cutoff
         rust_decimal_macros::dec!(0.02),
     ));
-    let sizing: Arc<dyn pm_core::ports::SizingModel> = Arc::new(FixedSizingModel {
-        shares: Shares(rust_decimal_macros::dec!(5)),
-    });
+    let sizing: Arc<dyn pm_core::ports::SizingModel> =
+        Arc::new(FixedFractionSizingModel::new(SIZING_FRACTION));
     let policy: Arc<dyn EntryPolicy> = Arc::new(OnePositionPolicy);
     let clock = MarketClock::btc_5m();
 
     // 4. Wire channels.
-    let (tick_tx, _tick_rx) = broadcast::channel::<pm_core::domain::Tick>(256);
+    let (tick_tx, _) = broadcast::channel::<pm_core::domain::Tick>(256);
     let (market_tx, market_rx) = watch::channel::<Option<ActiveMarket>>(None);
-    let (_intent_tx, _intent_rx) = mpsc::channel::<pm_core::domain::Intent>(8);
+    let (intent_tx, _intent_rx) = mpsc::channel::<pm_core::domain::Intent>(8);
     let (order_update_tx, _) = broadcast::channel::<pm_core::domain::OrderUpdate>(64);
     let (settled_tx, _) = broadcast::channel::<pm_core::domain::Settled>(16);
     let (redeemed_tx, redeemed_rx) = mpsc::channel::<Redeemed>(16);
@@ -148,19 +132,19 @@ async fn main() -> anyhow::Result<()> {
 
     let cancel = CancellationToken::new();
 
-    // 5. Wait until next window start.
-    let now_secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)?
-        .as_secs();
-    let next_window = clock.next_window_ts(now_secs);
-    let wait_ms = (next_window.0 - pm_core::types::Timestamp::now_ms().0).max(0) as u64;
-    if wait_ms > 0 {
-        info!(
-            wait_secs = wait_ms / 1000,
-            "waiting for next window to start trading"
-        );
-        tokio::time::sleep(Duration::from_millis(wait_ms)).await;
-    }
+    // // 5. Wait until next window start.
+    // let now_secs = std::time::SystemTime::now()
+    //     .duration_since(std::time::UNIX_EPOCH)?
+    //     .as_secs();
+    // let next_window = clock.next_window_ts(now_secs);
+    // let wait_ms = (next_window.0 - pm_core::types::Timestamp::now_ms().0).max(0) as u64;
+    // if wait_ms > 0 {
+    //     info!(
+    //         wait_secs = wait_ms / 1000,
+    //         "waiting for next window to start trading"
+    //     );
+    //     tokio::time::sleep(Duration::from_millis(wait_ms)).await;
+    // }
 
     // 6. Warm up
     let starting = client.balance().await?;
@@ -180,15 +164,17 @@ async fn main() -> anyhow::Result<()> {
         cancel.clone(),
     ));
 
-    // let h_decision = tokio::spawn(decision_center_task(
-    //     strategy,
-    //     sizing,
-    //     tick_rx,
-    //     market_rx.clone(),
-    //     intent_tx,
-    //     slot_rx.clone(),
-    //     cancel.clone(),
-    // ));
+    let h_decision = tokio::spawn(decision_center_task(
+        strategy,
+        sizing,
+        client.clone(),
+        bankroll.clone(),
+        tick_tx.subscribe(),
+        market_rx.clone(),
+        intent_tx,
+        slot_rx.clone(),
+        cancel.clone(),
+    ));
 
     // let h_executor = tokio::spawn(executor_task(
     //     policy,
@@ -258,7 +244,7 @@ async fn main() -> anyhow::Result<()> {
     // Join all handles (ignore individual errors — tasks log their own).
     let _ = h_price.await;
     let _ = h_market.await;
-    // let _ = h_decision.await;
+    let _ = h_decision.await;
     // let _ = h_executor.await;
     let _ = h_poller.await;
     let _ = h_settlement.await;
@@ -270,3 +256,4 @@ async fn main() -> anyhow::Result<()> {
     info!("pm-bot shut down cleanly");
     Ok(())
 }
+

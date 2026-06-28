@@ -4,7 +4,7 @@ use pm_core::{
     domain::{Market, MarketOutcome},
     error::{CoreError, Result},
     ports::MarketCatalog,
-    types::{MarketSlug, MarketStatus, MarketType, Price, Timestamp, TokenId},
+    types::{MarketSlug, MarketStatus, MarketType, Price, Shares, Timestamp, TokenId},
 };
 use polymarket_client_sdk_v2::gamma::{
     types::{request::MarketBySlugRequest, response::Market as PMMarket},
@@ -230,6 +230,15 @@ impl MarketCatalog for GammaMarketCatalog {
             closes_at: Timestamp(closes_at.timestamp_millis()),
             resolves_at: Timestamp(resolves_at.timestamp_millis()),
             status,
+            // Fall back to Polymarket's standard 0.01 tick / 5-share minimum if Gamma omits them.
+            order_price_min_tick_size: response
+                .order_price_min_tick_size
+                .map(Price)
+                .unwrap_or(Price(Decimal::new(1, 2))),
+            order_min_size: response
+                .order_min_size
+                .map(Shares)
+                .unwrap_or(Shares(Decimal::from(5))),
         })
     }
 }

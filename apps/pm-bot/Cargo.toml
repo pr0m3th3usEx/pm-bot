@@ -11,6 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 pm-core             = { path = "../../libs/pm-core" }
+pm-strategy         = { path = "../../libs/pm-strategy" }
 adapters            = { path = "../../adapters" }
 polymarket_client_sdk_v2 = { version = "0.5.1", features = ["clob", "gamma"] }
 tokio.workspace     = true
