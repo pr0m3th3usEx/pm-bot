@@ -93,7 +93,7 @@ pub async fn decision_center_task(
                             "strategy: hold"
                         );
                     }
-                    StrategyDecision::Enter { outcome } => {
+                    StrategyDecision::Enter { outcome, confidence } => {
                         // a. Resolve token_id from the already-fetched market.
                         debug!(outcomes = ?market.outcomes.iter().map(|o| o.name.clone()).collect::<Vec<_>>(), "strategy: enter — outcome chosen");
                         let Some(mo) = market.outcomes.iter().find(|o| o.name == outcome.as_str()) else {
@@ -167,6 +167,7 @@ pub async fn decision_center_task(
                             outcome = ?intent.outcome,
                             shares = %intent.shares.0,
                             price = %intent.limit_price.0,
+                            confidence = confidence,
                             "strategy: enter — emitting intent"
                         );
 

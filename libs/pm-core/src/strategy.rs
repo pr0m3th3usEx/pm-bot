@@ -22,8 +22,14 @@ impl<'a> StrategyContext<'a> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum StrategyDecision {
     Hold,
-    Enter { outcome: Outcome },
+    Enter {
+        outcome: Outcome,
+        /// Model probability for the chosen outcome, if the strategy computes one.
+        /// Used by the decision center for Kelly sizing and calibration logging.
+        /// `None` for strategies that decide on heuristics without a probability model.
+        confidence: Option<f64>,
+    },
 }
