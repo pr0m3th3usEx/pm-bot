@@ -65,6 +65,26 @@ enum MarketMsg {
     Other,
 }
 
+/// A single WebSocket text frame from the market channel.
+///
+/// Polymarket delivers book snapshots as a JSON *array* of objects (one per asset),
+/// while some other updates arrive as a single object. Accept either shape.
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum MarketFrame {
+    Batch(Vec<MarketMsg>),
+    Single(MarketMsg),
+}
+
+impl MarketFrame {
+    fn into_messages(self) -> Vec<MarketMsg> {
+        match self {
+            MarketFrame::Batch(msgs) => msgs,
+            MarketFrame::Single(msg) => vec![msg],
+        }
+    }
+}
+
 // ─── Price parsing helper ─────────────────────────────────────────────────────
 
 /// Parse a decimal string from Polymarket to a `Price`.
@@ -216,12 +236,14 @@ impl PolymarketMarketFeed {
                 loop {
                     match read.next().await {
                         Some(Ok(Message::Text(text))) => {
-                            match serde_json::from_str::<MarketMsg>(&text) {
-                                Ok(msg) => {
-                                    for book in to_outcome_books(msg) {
-                                        if tx.send(Ok(book)).await.is_err() {
-                                            // Receiver dropped — exit cleanly.
-                                            break 'outer;
+                            match serde_json::from_str::<MarketFrame>(&text) {
+                                Ok(frame) => {
+                                    for msg in frame.into_messages() {
+                                        for book in to_outcome_books(msg) {
+                                            if tx.send(Ok(book)).await.is_err() {
+                                                // Receiver dropped — exit cleanly.
+                                                break 'outer;
+                                            }
                                         }
                                     }
                                 }
@@ -375,5 +397,41 @@ mod tests {
         let msg: MarketMsg = serde_json::from_str(raw_other).expect("should parse as Other");
         let books = to_outcome_books(msg);
         assert!(books.is_empty());
+    }
+
+    /// The market channel delivers book snapshots as a JSON array of objects.
+    /// A `MarketFrame` must accept both that batch shape and a single object.
+    #[test]
+    fn parse_market_frame_batch_and_single() {
+        use pm_core::types::TokenId;
+        use polymarket_client_sdk_v2::types::U256;
+
+        // Array of two book snapshots (the real market-channel shape).
+        let raw_batch = r#"[
+            {"event_type":"book","asset_id":"111","bids":[{"price":"0.40","size":"1"}],"asks":[{"price":"0.60","size":"1"}],"timestamp":"1700000000000"},
+            {"event_type":"book","asset_id":"222","bids":[{"price":"0.30","size":"1"}],"asks":[{"price":"0.70","size":"1"}],"timestamp":"1700000000000"}
+        ]"#;
+
+        let frame: MarketFrame = serde_json::from_str(raw_batch).expect("should parse batch frame");
+        let books: Vec<_> = frame
+            .into_messages()
+            .into_iter()
+            .flat_map(to_outcome_books)
+            .collect();
+        assert_eq!(books.len(), 2);
+        assert_eq!(books[0].token_id, TokenId(U256::from(111u64)));
+        assert_eq!(books[1].token_id, TokenId(U256::from(222u64)));
+
+        // A single object must still parse via the `Single` variant.
+        let raw_single = r#"{"event_type":"best_bid_ask","asset_id":"333","best_bid":"0.48","best_ask":"0.52","timestamp":"1700000000000"}"#;
+        let frame: MarketFrame =
+            serde_json::from_str(raw_single).expect("should parse single frame");
+        let books: Vec<_> = frame
+            .into_messages()
+            .into_iter()
+            .flat_map(to_outcome_books)
+            .collect();
+        assert_eq!(books.len(), 1);
+        assert_eq!(books[0].token_id, TokenId(U256::from(333u64)));
     }
 }
