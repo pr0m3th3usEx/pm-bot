@@ -2,6 +2,48 @@ use crate::types::{
     MarketSlug, MarketStatus, MarketType, Outcome, PositionStatus, Price, Shares, Side, Timestamp,
     TokenId, Usdc,
 };
+
+// ─── Order-book types ─────────────────────────────────────────────────────────
+
+/// Snapshot of one exchange's top-of-book (best bid and ask).
+///
+/// `bid_vol` and `ask_vol` are **USD notional** (`price × qty`), ensuring
+/// that volume weights are dollar-comparable across venues.
+#[derive(Debug, Clone, Default)]
+pub struct TopOfBook {
+    pub bid_price: f64,
+    /// USD notional at the best bid (bid_price × bid_qty).
+    pub bid_vol: f64,
+    pub ask_price: f64,
+    /// USD notional at the best ask (ask_price × ask_qty).
+    pub ask_vol: f64,
+}
+
+impl TopOfBook {
+    pub fn is_empty(&self) -> bool {
+        self.bid_vol == 0.0 && self.ask_vol == 0.0
+    }
+}
+
+/// Exchange identifier for order-book feeds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExchangeId {
+    Binance,
+    Okx,
+    Lighter,
+}
+
+impl ExchangeId {
+    pub const ALL: [ExchangeId; 3] = [Self::Binance, Self::Okx, Self::Lighter];
+}
+
+/// Top-of-book snapshot from a single exchange at a point in time.
+#[derive(Debug, Clone)]
+pub struct BookSnapshot {
+    pub exchange: ExchangeId,
+    pub top: TopOfBook,
+    pub at: Timestamp,
+}
 use alloy::primitives::FixedBytes;
 use serde::{Deserialize, Serialize};
 

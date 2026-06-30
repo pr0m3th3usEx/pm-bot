@@ -1,32 +1,4 @@
-/// Snapshot of one exchange's top-of-book (best bid and ask).
-///
-/// Placeholder: populated by order-book streaming once connected.
-/// Until then, all fields default to 0.0 and OBI contributes zero drift.
-#[derive(Debug, Clone, Default)]
-pub struct TopOfBook {
-    pub bid_price: f64,
-    pub bid_vol: f64,
-    pub ask_price: f64,
-    pub ask_vol: f64,
-}
-
-impl TopOfBook {
-    pub fn is_empty(&self) -> bool {
-        self.bid_vol == 0.0 && self.ask_vol == 0.0
-    }
-}
-
-/// Exchange identifier for order-book feeds.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ExchangeId {
-    Binance,
-    Okx,
-    Lighter,
-}
-
-impl ExchangeId {
-    pub const ALL: [ExchangeId; 3] = [Self::Binance, Self::Okx, Self::Lighter];
-}
+use pm_core::domain::{ExchangeId, TopOfBook};
 
 /// Exponentially-weighted moving-average order book imbalance for one exchange.
 ///

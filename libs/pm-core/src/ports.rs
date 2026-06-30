@@ -1,4 +1,4 @@
-use crate::domain::{Intent, Market, PositionRecord, PositionUpdate, RedeemReceipt, Tick};
+use crate::domain::{BookSnapshot, Intent, Market, PositionRecord, PositionUpdate, RedeemReceipt, Tick};
 use crate::error::Result;
 use crate::types::{MarketSlug, Price, Shares, Side, TokenId, Usdc};
 use async_trait::async_trait;
@@ -18,6 +18,15 @@ pub enum RedemptionStatus {
 pub trait PriceFeed: Send + Sync {
     /// Block until the next tick is available.
     async fn next_tick(&mut self) -> Result<Tick>;
+}
+
+// ─── Order-book feed ─────────────────────────────────────────────────────────
+
+/// Source of top-of-book snapshots. One implementation per venue.
+#[async_trait]
+pub trait OrderBookFeed: Send + Sync {
+    /// Block until the next top-of-book snapshot is available.
+    async fn next_book(&mut self) -> Result<BookSnapshot>;
 }
 
 // ─── Market catalog ───────────────────────────────────────────────────────────
