@@ -18,6 +18,11 @@ Thumbs.db
 # Environment files
 *.env
 
+# Runtime SQLite databases (live store, dry-run store, session recordings)
+*.db
+*.sqlite
+*.sqlite3
+
 # Logs
 logs/
 *.log
