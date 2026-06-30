@@ -332,7 +332,7 @@ mod tests {
             store
                 .insert_position(&rec)
                 .await
-                .expect(&format!("INSERT failed for status {:?}", status));
+                .unwrap_or_else(|_| panic!("INSERT failed for status {:?}", status));
         }
 
         // Side round-trip
@@ -342,7 +342,7 @@ mod tests {
             store
                 .insert_position(&rec)
                 .await
-                .expect(&format!("INSERT failed for side {:?}", side));
+                .unwrap_or_else(|_| panic!("INSERT failed for side {:?}", side));
         }
     }
 }

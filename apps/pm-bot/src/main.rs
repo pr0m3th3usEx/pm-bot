@@ -26,11 +26,12 @@ use pm_core::{
     clock::MarketClock,
     domain::{ActiveMarket, PendingRedemption, Redeemed},
     ports::{Admission, EntryPolicy},
-    state::{BankrollState, RoundSlotState},
+    state::{BankrollState, OutcomeBookCache, RoundSlotState},
     tasks::{
-        bankroll::bankroll_task, heartbeat::heartbeat_task, market_rotation::market_rotation_task,
-        order_status_poller::order_status_poller_task, persistence::persistence_task,
-        redeem_status_poller::redeem_status_poller_task, settlement::settlement_task,
+        bankroll::bankroll_task, heartbeat::heartbeat_task, market_data::market_data_task,
+        market_rotation::market_rotation_task, order_status_poller::order_status_poller_task,
+        persistence::persistence_task, redeem_status_poller::redeem_status_poller_task,
+        settlement::settlement_task,
     },
 };
 use pm_strategy::sizing::{FixedFractionSizingModel, SIZING_FRACTION};
@@ -132,6 +133,8 @@ async fn main() -> anyhow::Result<()> {
 
     let cancel = CancellationToken::new();
 
+    let book_cache = Arc::new(RwLock::new(OutcomeBookCache::default()));
+
     // // 5. Wait until next window start.
     let now_secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
@@ -164,10 +167,17 @@ async fn main() -> anyhow::Result<()> {
         cancel.clone(),
     ));
 
+    let h_market_data = tokio::spawn(market_data_task(
+        market_rx.clone(),
+        book_cache.clone(),
+        |ids| Box::new(adapters::polymarket_market_feed::PolymarketMarketFeed::connect(ids)),
+        cancel.clone(),
+    ));
+
     let h_decision = tokio::spawn(decision_center_task(
         strategy,
         sizing,
-        client.clone(),
+        book_cache.clone(),
         bankroll.clone(),
         tick_tx.subscribe(),
         market_rx.clone(),
@@ -176,16 +186,16 @@ async fn main() -> anyhow::Result<()> {
         cancel.clone(),
     ));
 
-    let _h_executor = tokio::spawn(executor_task(
-        policy,
-        client.clone(),
-        store.clone(),
-        market_rx.clone(),
-        intent_rx,
-        order_update_tx.clone(),
-        slot_tx,
-        cancel.clone(),
-    ));
+    // let _h_executor = tokio::spawn(executor_task(
+    //     policy,
+    //     client.clone(),
+    //     store.clone(),
+    //     market_rx.clone(),
+    //     intent_rx,
+    //     order_update_tx.clone(),
+    //     slot_tx,
+    //     cancel.clone(),
+    // ));
 
     let h_poller = tokio::spawn(order_status_poller_task(
         client.clone(),
@@ -244,6 +254,7 @@ async fn main() -> anyhow::Result<()> {
     // Join all handles (ignore individual errors — tasks log their own).
     let _ = h_price.await;
     let _ = h_market.await;
+    let _ = h_market_data.await;
     let _ = h_decision.await;
     // let _ = h_executor.await;
     let _ = h_poller.await;

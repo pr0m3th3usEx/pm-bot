@@ -44,6 +44,19 @@ pub struct BookSnapshot {
     pub top: TopOfBook,
     pub at: Timestamp,
 }
+
+/// Real-time marketable prices for one Polymarket outcome token, framed by the
+/// CLOB `Side` to mirror `MarketClient::quote`. Prices only (no depth), keyed by
+/// `TokenId` (U256 decimal).
+#[derive(Debug, Clone)]
+pub struct OutcomeBook {
+    pub token_id: TokenId,
+    /// Price to BUY the outcome — the best ask (what a buyer must pay).
+    pub buy_price: Option<Price>,
+    /// Price to SELL the outcome — the best bid (what a seller receives).
+    pub sell_price: Option<Price>,
+    pub at: Timestamp,
+}
 use alloy::primitives::FixedBytes;
 use serde::{Deserialize, Serialize};
 

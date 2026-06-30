@@ -8,6 +8,7 @@ use crate::ports::{Admission, EntryPolicy, MarketClient, Store};
 use crate::state::RoundSlotState;
 use crate::types::{PositionStatus, Timestamp};
 
+#[allow(clippy::too_many_arguments)]
 pub async fn executor_task(
     policy: Arc<dyn EntryPolicy>,
     client: Arc<dyn MarketClient>,

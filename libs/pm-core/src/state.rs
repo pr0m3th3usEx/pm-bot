@@ -1,7 +1,8 @@
 use rust_decimal_macros::dec;
 
+use crate::domain::OutcomeBook;
 use crate::error::{CoreError, Result};
-use crate::types::{MarketStatus, Usdc};
+use crate::types::{MarketStatus, Price, Side, TokenId, Usdc};
 
 // ─── 1. Round slot (one-position-per-round invariant) ─────────────────────────
 
@@ -144,9 +145,11 @@ impl Default for PositionState {
     }
 }
 
-/// 4. Bankroll state: Tracks the bot's current bankroll (pUSD), current money-in-play, and about to be-redeemed pUSD. This is used to compute the Kelly fraction for sizing new positions.
-/// The bankroll is updated on every position fill, settlement, and redemption.
-/// The money-in-play is updated on every position fill and settlement. The about-to-be-redeemed pUSD is updated on every position settlement and redemption.
+/// Bankroll state: tracks the bot's current bankroll (pUSD), current money-in-play,
+/// and about-to-be-redeemed pUSD.
+///
+/// Used to compute the Kelly fraction for sizing new positions. Updated on every
+/// position fill, settlement, and redemption.
 pub struct BankrollState {
     pub bankroll: Usdc,
     pub money_in_play: Usdc,
@@ -181,6 +184,34 @@ impl BankrollState {
 impl Default for BankrollState {
     fn default() -> Self {
         Self::new(Usdc(dec!(0)))
+    }
+}
+
+// ─── 5. Outcome-book cache ────────────────────────────────────────────────────
+
+/// In-memory cache of the latest `OutcomeBook` for each `TokenId` in the current round.
+/// Written by `market_data_task`; read by `decision_center_task`.
+#[derive(Default)]
+pub struct OutcomeBookCache {
+    books: std::collections::HashMap<TokenId, OutcomeBook>,
+}
+
+impl OutcomeBookCache {
+    pub fn update(&mut self, book: OutcomeBook) {
+        self.books.insert(book.token_id.clone(), book);
+    }
+
+    /// Mirrors `MarketClient::quote`: Buy → buy_price (ask), Sell → sell_price (bid).
+    pub fn price(&self, token_id: &TokenId, side: Side) -> Option<Price> {
+        let b = self.books.get(token_id)?;
+        match side {
+            Side::Buy => b.buy_price.clone(),
+            Side::Sell => b.sell_price.clone(),
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.books.clear();
     }
 }
 
@@ -243,6 +274,40 @@ mod tests {
     fn position_illegal_transition() {
         let s = PositionState::new(); // Submitted
         assert!(s.transition(Won).is_err());
+    }
+
+    #[test]
+    fn outcome_book_cache_buy_sell_mapping() {
+        use polymarket_client_sdk_v2::types::U256;
+        use rust_decimal::Decimal;
+        use std::str::FromStr;
+
+        let token_id = TokenId(U256::from(42u64));
+
+        let buy_price = Price(Decimal::from_str("0.55").unwrap());
+        let sell_price = Price(Decimal::from_str("0.48").unwrap());
+
+        let book = OutcomeBook {
+            token_id: token_id.clone(),
+            buy_price: Some(buy_price.clone()),
+            sell_price: Some(sell_price.clone()),
+            at: crate::types::Timestamp(0),
+        };
+
+        let mut cache = OutcomeBookCache::default();
+        cache.update(book);
+
+        assert_eq!(cache.price(&token_id, Side::Buy), Some(buy_price));
+        assert_eq!(cache.price(&token_id, Side::Sell), Some(sell_price));
+
+        // Unknown token → None
+        let other_token = TokenId(U256::from(99u64));
+        assert_eq!(cache.price(&other_token, Side::Buy), None);
+
+        // After clear, lookups return None
+        cache.clear();
+        assert_eq!(cache.price(&token_id, Side::Buy), None);
+        assert_eq!(cache.price(&token_id, Side::Sell), None);
     }
 
     #[test]

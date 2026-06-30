@@ -1,4 +1,4 @@
-use crate::domain::{BookSnapshot, Intent, Market, PositionRecord, PositionUpdate, RedeemReceipt, Tick};
+use crate::domain::{BookSnapshot, Intent, Market, OutcomeBook, PositionRecord, PositionUpdate, RedeemReceipt, Tick};
 use crate::error::Result;
 use crate::types::{MarketSlug, Price, Shares, Side, TokenId, Usdc};
 use async_trait::async_trait;
@@ -27,6 +27,16 @@ pub trait PriceFeed: Send + Sync {
 pub trait OrderBookFeed: Send + Sync {
     /// Block until the next top-of-book snapshot is available.
     async fn next_book(&mut self) -> Result<BookSnapshot>;
+}
+
+// ─── Market data feed ────────────────────────────────────────────────────────
+
+/// Source of real-time outcome-price (top-of-book) updates for a fixed set of
+/// Polymarket asset ids. One instance per round's subscription set.
+#[async_trait]
+pub trait MarketDataFeed: Send + Sync {
+    /// Block until the next outcome-price update is available.
+    async fn next_update(&mut self) -> Result<OutcomeBook>;
 }
 
 // ─── Market catalog ───────────────────────────────────────────────────────────

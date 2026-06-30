@@ -22,6 +22,12 @@ pub struct GammaMarketCatalog {
     http: reqwest::Client,
 }
 
+impl Default for GammaMarketCatalog {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl GammaMarketCatalog {
     pub fn new() -> Self {
         Self {
@@ -59,14 +65,17 @@ impl GammaMarketCatalog {
     }
 
     fn detect_market_type(response: &PMMarket) -> MarketType {
-        response
+        if response
             .tags
             .as_deref()
             .unwrap_or_default()
             .iter()
             .any(|t| t.slug.as_deref() == Some("up-or-down"))
-            .then_some(MarketType::UpDown)
-            .unwrap_or(MarketType::Other)
+        {
+            MarketType::UpDown
+        } else {
+            MarketType::Other
+        }
     }
 
     // Fetch open / close prices for UpDown markets from the crypto-prices API. This is used to determine the "price to beat" (openPrice) for the NEXT round, which is needed during resolution of the current round.
@@ -160,11 +169,9 @@ impl MarketCatalog for GammaMarketCatalog {
         let market_id = response.id.clone();
         let question_id = response
             .question_id
-            .clone()
             .ok_or_else(|| CoreError::Adapter(format!("missing question_id for {slug}")))?;
         let condition_id = response
             .condition_id
-            .clone()
             .ok_or_else(|| CoreError::Adapter(format!("missing condition_id for {slug}")))?;
 
         let outcomes = self.map_outcomes(slug, &response)?;
@@ -175,7 +182,7 @@ impl MarketCatalog for GammaMarketCatalog {
             return Err(CoreError::Adapter(format!("missing events for {slug}")));
         };
         let event = events
-            .get(0)
+            .first()
             .ok_or_else(|| CoreError::Adapter(format!("missing event for {slug}")))?;
 
         let opens_at = event
