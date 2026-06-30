@@ -112,10 +112,6 @@ async fn main() -> anyhow::Result<()> {
         None
     };
 
-    // Session id for recorder rows.
-    let session_id = std::env::var("RECORD_SESSION_ID")
-        .unwrap_or_else(|_| format!("{}", pm_core::types::Timestamp::now_ms().0));
-
     let (client, starting_bankroll): (Arc<dyn pm_core::ports::MarketClient>, _) = match mode {
         ExecutionMode::DryRun => {
             info!(
@@ -186,7 +182,6 @@ async fn main() -> anyhow::Result<()> {
             Arc::new(adapters::recording_feeds::RecordingCatalog::new(
                 catalog_inner.clone(),
                 sink.clone(),
-                session_id.clone(),
             ))
         } else {
             catalog_inner
@@ -242,7 +237,7 @@ async fn main() -> anyhow::Result<()> {
                 Box::new(adapters::recording_feeds::RecordingPriceFeed::new(
                     inner,
                     sink.clone(),
-                    session_id.clone(),
+                    market_rx.clone(),
                 ))
             } else {
                 inner
@@ -264,7 +259,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Build the market data connect closure, optionally wrapped with recorder.
     let recorder_for_feed = recorder.clone();
-    let session_id_for_feed = session_id.clone();
+    let market_rx_for_feed = market_rx.clone();
     let connect_fn = move |ids: Vec<String>| -> Box<dyn pm_core::ports::MarketDataFeed> {
         let inner: Box<dyn pm_core::ports::MarketDataFeed> = Box::new(
             adapters::polymarket_market_feed::PolymarketMarketFeed::connect(ids),
@@ -273,7 +268,7 @@ async fn main() -> anyhow::Result<()> {
             Box::new(adapters::recording_feeds::RecordingMarketDataFeed::new(
                 inner,
                 sink.clone(),
-                session_id_for_feed.clone(),
+                market_rx_for_feed.clone(),
             ))
         } else {
             inner

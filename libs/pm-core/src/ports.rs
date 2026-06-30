@@ -119,25 +119,24 @@ pub enum Admission {
 /// to durable storage. Used by the recording decorator adapters.
 #[async_trait]
 pub trait MarketDataRecorder: Send + Sync {
-    /// Record an outcome-book snapshot.
+    /// Record an outcome-book snapshot, keyed by market slug.
     async fn record_outcome_book(
         &self,
         book: &crate::domain::OutcomeBook,
-        session_id: &str,
+        market_slug: &str,
     ) -> crate::error::Result<()>;
 
-    /// Record a price tick.
+    /// Record a price tick, keyed by market slug.
     async fn record_tick(
         &self,
         tick: &crate::domain::Tick,
-        session_id: &str,
+        market_slug: &str,
     ) -> crate::error::Result<()>;
 
-    /// Record market metadata.
+    /// Record market metadata. The slug is taken from `market.slug.0`.
     async fn record_market(
         &self,
         market: &crate::domain::Market,
-        session_id: &str,
     ) -> crate::error::Result<()>;
 }
 
