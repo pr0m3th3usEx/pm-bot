@@ -18,8 +18,7 @@ fn generate_next_5m_candle_timestamp() -> u64 {
     let current_timestamp = duration_since_epoch.as_secs();
 
     // Calculate the next 5-minute interval
-    let next_5m_interval = ((current_timestamp / 300) + 1) * 300;
-    next_5m_interval
+    ((current_timestamp / 300) + 1) * 300
 }
 
 #[tokio::main]
@@ -34,7 +33,7 @@ async fn main() {
         next_5m_candle_timestamp - 300
     );
 
-    let current_5m_candle_timestamp = next_5m_candle_timestamp - 300;
+    let _current_5m_candle_timestamp = next_5m_candle_timestamp - 300;
 
     // Retrieve the private key from environment variables
     let private_key = std::env::var("POLYGON_PRIVATE_KEY")
@@ -61,7 +60,7 @@ async fn main() {
     let safe_address = derive_safe_wallet(address, POLYGON).expect("invalid address");
     println!("Authenticated user's proxy address: {:?}", safe_address);
 
-    /// (TEST CODE) Redeem a position
+    // (TEST CODE) Redeem a position
     let condition_id = "0xfb3d98e9e007bd2bec40e442a83e0457b1c935b37a5c43721ab4e11e9843fdc3";
 
     let position = PositionRecord {

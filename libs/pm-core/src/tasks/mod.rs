@@ -2,6 +2,7 @@ pub mod bankroll;
 pub mod decision_center;
 pub mod executor;
 pub mod heartbeat;
+pub mod market_data;
 pub mod market_rotation;
 pub mod order_status_poller;
 pub mod persistence;

@@ -14,8 +14,7 @@ const TICK_CACHE: usize = 50;
 fn resolution_price(ticks: &VecDeque<Tick>, closes_at: Timestamp) -> Option<Price> {
     ticks
         .iter()
-        .filter(|t| t.at.0 <= closes_at.0)
-        .last()
+        .rfind(|t| t.at.0 <= closes_at.0)
         .map(|t| t.price.clone())
 }
 

@@ -9,6 +9,7 @@ use rust_decimal::prelude::ToPrimitive;
 /// Enter only when:
 ///   - time remaining ≤ `entry_window_secs`, AND
 ///   - |price − strike| ≥ `margin`
+///
 /// Picks Up if price > strike, Down otherwise.
 pub struct V1BasicStrategy {
     /// Seconds-to-cutoff threshold below which we consider entering.

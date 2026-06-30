@@ -4,8 +4,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use crate::domain::{ActiveMarket, Intent, Tick};
-use crate::ports::{MarketClient, SizingModel, Strategy};
-use crate::state::{BankrollState, RoundSlotState};
+use crate::ports::{SizingModel, Strategy};
+use crate::state::{BankrollState, OutcomeBookCache, RoundSlotState};
 use crate::strategy::{StrategyContext, StrategyDecision};
 use crate::types::{MarketStatus, Price, Side};
 
@@ -14,10 +14,11 @@ use crate::types::{MarketStatus, Price, Side};
 // rust_decimal_macros::dec! does not produce a value that satisfies the `const` requirement
 // in all compiler versions supported by this workspace.
 
+#[allow(clippy::too_many_arguments)]
 pub async fn decision_center_task(
     strategy: Arc<dyn Strategy>,
     sizing: Arc<dyn SizingModel>,
-    client: Arc<dyn MarketClient>,
+    book_cache: Arc<RwLock<OutcomeBookCache>>,
     bankroll_state: Arc<RwLock<BankrollState>>,
     mut tick_rx: broadcast::Receiver<Tick>,
     market_rx: watch::Receiver<Option<ActiveMarket>>,
@@ -102,14 +103,12 @@ pub async fn decision_center_task(
                         };
                         let token_id = mo.token_id.clone();
 
-                        // b. Fetch the best-ask (marketable buy price) via quote.
-                        // NOTE: Side::Buy walks the asks side of the orderbook in the Polymarket
-                        // CLOB SDK (confirmed in clob/utilities.rs: Side::Buy => &orderbook.asks).
-                        // So Side::Buy correctly returns the ask price (what a buyer must pay).
-                        let ask = match client.quote(&token_id, Side::Buy).await {
-                            Ok(p) => p,
-                            Err(e) => {
-                                warn!(error = %e, "quote failed — holding");
+                        // b. Look up the best-ask (marketable buy price) from the warm cache.
+                        // NOTE: Side::Buy → buy_price (best ask) — what a buyer must pay.
+                        let ask = match book_cache.read().await.price(&token_id, Side::Buy) {
+                            Some(p) => p,
+                            None => {
+                                debug!(token_id = %token_id.0, "no live ask yet — holding");
                                 continue;
                             }
                         };

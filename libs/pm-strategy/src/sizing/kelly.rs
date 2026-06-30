@@ -1,14 +1,14 @@
-/// Fractional Kelly position sizing utilities.
-///
-/// # Integration note
-/// The current `SizingModel::size()` interface takes only `(bankroll, limit_price)`.
-/// Full Kelly requires the model probability `p`, which lives in
-/// `StrategyDecision::Enter { confidence }`. The decision center can call
-/// `kelly_shares()` directly when `confidence` is `Some`, bypassing the
-/// `SizingModel` trait for Kelly-aware strategies.
-///
-/// These functions are the pure math layer; wiring them into the execution
-/// path is a separate step.
+//! Fractional Kelly position sizing utilities.
+//!
+//! # Integration note
+//! The current `SizingModel::size()` interface takes only `(bankroll, limit_price)`.
+//! Full Kelly requires the model probability `p`, which lives in
+//! `StrategyDecision::Enter { confidence }`. The decision center can call
+//! `kelly_shares()` directly when `confidence` is `Some`, bypassing the
+//! `SizingModel` trait for Kelly-aware strategies.
+//!
+//! These functions are the pure math layer; wiring them into the execution
+//! path is a separate step.
 
 /// Full Kelly fraction for a binary bet.
 ///

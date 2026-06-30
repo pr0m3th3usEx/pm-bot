@@ -36,7 +36,7 @@ impl VolEstimator {
     /// Feed the next price tick. Only updates the variance estimate every `stride` ticks.
     pub fn update(&mut self, price: f64) {
         self.tick_counter += 1;
-        if self.tick_counter % self.stride != 0 {
+        if !self.tick_counter.is_multiple_of(self.stride) {
             return;
         }
         if let Some(prev) = self.last_price {

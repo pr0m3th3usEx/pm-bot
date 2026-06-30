@@ -29,7 +29,7 @@ pub struct Price(pub Decimal);
 pub struct Shares(pub Decimal);
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Usdc(pub Decimal);
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct TokenId(pub U256);
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct MarketSlug(pub String);
@@ -55,11 +55,11 @@ impl Side {
     }
 }
 
-impl Into<polymarket_client_sdk_v2::clob::types::Side> for Side {
-    fn into(self) -> polymarket_client_sdk_v2::clob::types::Side {
-        match self {
-            Self::Buy => polymarket_client_sdk_v2::clob::types::Side::Buy,
-            Self::Sell => polymarket_client_sdk_v2::clob::types::Side::Sell,
+impl From<Side> for polymarket_client_sdk_v2::clob::types::Side {
+    fn from(val: Side) -> Self {
+        match val {
+            Side::Buy => polymarket_client_sdk_v2::clob::types::Side::Buy,
+            Side::Sell => polymarket_client_sdk_v2::clob::types::Side::Sell,
         }
     }
 }

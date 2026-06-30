@@ -97,8 +97,8 @@ mod tests {
         let cur = c.current_slug(now);
         let nxt = c.next_slug(now);
         // extract timestamps
-        let cur_ts: u64 = cur.0.split('-').last().unwrap().parse().unwrap();
-        let nxt_ts: u64 = nxt.0.split('-').last().unwrap().parse().unwrap();
+        let cur_ts: u64 = cur.0.split('-').next_back().unwrap().parse().unwrap();
+        let nxt_ts: u64 = nxt.0.split('-').next_back().unwrap().parse().unwrap();
         assert_eq!(nxt_ts - cur_ts, 300);
     }
 }
