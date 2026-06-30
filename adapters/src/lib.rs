@@ -6,4 +6,6 @@ pub mod gamma_market_catalog;
 pub mod mock_store;
 pub mod okx_order_book_feed;
 pub mod polymarket_market_feed;
+pub mod recording_feeds;
+pub mod sim_market_client;
 pub mod sqlite_store;

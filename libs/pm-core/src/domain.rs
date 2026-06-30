@@ -84,6 +84,9 @@ pub struct Market {
     pub closes_at: Timestamp,
     pub resolves_at: Timestamp,
     pub status: MarketStatus,
+    /// Winning outcome name (e.g. "Up"). `None` until the market resolves.
+    #[serde(default)]
+    pub resolved_outcome: Option<String>,
     /// Minimum price increment for limit orders (Gamma `orderPriceMinTickSize`, e.g. 0.01).
     pub order_price_min_tick_size: Price,
     /// Minimum order size in shares the CLOB will accept (Gamma `orderMinSize`, e.g. 5).

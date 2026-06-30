@@ -113,6 +113,33 @@ pub enum Admission {
     Reject,
 }
 
+// ─── Market data recorder ─────────────────────────────────────────────────────
+
+/// Sink for recording live market data (outcome books, price ticks, market metadata)
+/// to durable storage. Used by the recording decorator adapters.
+#[async_trait]
+pub trait MarketDataRecorder: Send + Sync {
+    /// Record an outcome-book snapshot, keyed by market slug.
+    async fn record_outcome_book(
+        &self,
+        book: &crate::domain::OutcomeBook,
+        market_slug: &str,
+    ) -> crate::error::Result<()>;
+
+    /// Record a price tick, keyed by market slug.
+    async fn record_tick(
+        &self,
+        tick: &crate::domain::Tick,
+        market_slug: &str,
+    ) -> crate::error::Result<()>;
+
+    /// Record market metadata. The slug is taken from `market.slug.0`.
+    async fn record_market(
+        &self,
+        market: &crate::domain::Market,
+    ) -> crate::error::Result<()>;
+}
+
 // ─── Store ────────────────────────────────────────────────────────────────────
 
 /// Durable audit + PnL storage. SQLite behind it; mockable.

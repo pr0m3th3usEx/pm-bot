@@ -17,6 +17,24 @@ use tracing::info;
 pub const GAMMA_API_URL: &str = "https://gamma-api.polymarket.com";
 const CRYPTO_PRICE_URL: &str = "https://polymarket.com/api/crypto/crypto-price";
 
+/// Returns the name of the winning outcome, or `None` if the winner cannot be
+/// determined (empty vecs, length mismatch, or no price ≥ 0.99).
+fn winning_outcome(outcomes: &[String], prices: &[Decimal]) -> Option<String> {
+    if outcomes.is_empty() || outcomes.len() != prices.len() {
+        return None;
+    }
+    let (idx, max_price) = prices
+        .iter()
+        .enumerate()
+        .max_by(|(_, a), (_, b)| a.cmp(b))?;
+    // 0.99 as Decimal::new(99, 2)
+    if *max_price >= Decimal::new(99, 2) {
+        Some(outcomes[idx].clone())
+    } else {
+        None
+    }
+}
+
 pub struct GammaMarketCatalog {
     client: GammaClient,
     http: reqwest::Client,
@@ -225,6 +243,15 @@ impl MarketCatalog for GammaMarketCatalog {
             None
         };
 
+        let resolved_outcome = if status == MarketStatus::Resolved {
+            match (response.outcomes.as_ref(), response.outcome_prices.as_ref()) {
+                (Some(o), Some(p)) => winning_outcome(o, p),
+                _ => None,
+            }
+        } else {
+            None
+        };
+
         Ok(Market {
             slug: slug.clone(),
             market_type,
@@ -237,6 +264,7 @@ impl MarketCatalog for GammaMarketCatalog {
             closes_at: Timestamp(closes_at.timestamp_millis()),
             resolves_at: Timestamp(resolves_at.timestamp_millis()),
             status,
+            resolved_outcome,
             // Fall back to Polymarket's standard 0.01 tick / 5-share minimum if Gamma omits them.
             order_price_min_tick_size: response
                 .order_price_min_tick_size
@@ -256,10 +284,56 @@ mod tests {
 
     use pm_core::ports::MarketCatalog;
     use rust_decimal::Decimal;
+    use rust_decimal_macros::dec;
 
     fn catalog() -> super::GammaMarketCatalog {
         super::GammaMarketCatalog::new()
     }
+
+    // ── winning_outcome pure tests ────────────────────────────────────────────
+
+    #[test]
+    fn winning_outcome_up_wins() {
+        let outcomes = vec!["Up".to_string(), "Down".to_string()];
+        let prices = vec![dec!(1), dec!(0)];
+        assert_eq!(
+            super::winning_outcome(&outcomes, &prices),
+            Some("Up".to_string())
+        );
+    }
+
+    #[test]
+    fn winning_outcome_down_wins() {
+        let outcomes = vec!["Up".to_string(), "Down".to_string()];
+        let prices = vec![dec!(0), dec!(1)];
+        assert_eq!(
+            super::winning_outcome(&outcomes, &prices),
+            Some("Down".to_string())
+        );
+    }
+
+    #[test]
+    fn winning_outcome_tie_returns_none() {
+        let outcomes = vec!["Up".to_string(), "Down".to_string()];
+        let prices = vec![dec!(0.5), dec!(0.5)];
+        assert_eq!(super::winning_outcome(&outcomes, &prices), None);
+    }
+
+    #[test]
+    fn winning_outcome_length_mismatch_returns_none() {
+        let outcomes = vec!["Up".to_string()];
+        let prices = vec![dec!(1), dec!(0)];
+        assert_eq!(super::winning_outcome(&outcomes, &prices), None);
+    }
+
+    #[test]
+    fn winning_outcome_empty_returns_none() {
+        let outcomes: Vec<String> = vec![];
+        let prices: Vec<Decimal> = vec![];
+        assert_eq!(super::winning_outcome(&outcomes, &prices), None);
+    }
+
+    // ── network tests ─────────────────────────────────────────────────────────
 
     #[tokio::test]
     async fn resolves_updown_market() {
