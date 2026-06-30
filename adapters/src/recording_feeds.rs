@@ -40,13 +40,14 @@ CREATE TABLE IF NOT EXISTS ticks (
 CREATE INDEX IF NOT EXISTS idx_ticks_slug ON ticks(market_slug);
 
 CREATE TABLE IF NOT EXISTS markets (
-    id          INTEGER PRIMARY KEY,
-    slug        TEXT    NOT NULL,
-    opens_at    INTEGER NOT NULL,
-    closes_at   INTEGER NOT NULL,
-    resolves_at INTEGER NOT NULL,
-    status      TEXT    NOT NULL,
-    recorded_at INTEGER NOT NULL
+    id               INTEGER PRIMARY KEY,
+    slug             TEXT    NOT NULL,
+    opens_at         INTEGER NOT NULL,
+    closes_at        INTEGER NOT NULL,
+    resolves_at      INTEGER NOT NULL,
+    status           TEXT    NOT NULL,
+    resolved_outcome TEXT,
+    recorded_at      INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_markets_slug ON markets(slug);
 ";
@@ -111,14 +112,15 @@ impl MarketDataRecorder for SqliteMarketDataRecorder {
             .lock()
             .map_err(|e| CoreError::Store(e.to_string()))?;
         conn.execute(
-            "INSERT INTO markets (slug, opens_at, closes_at, resolves_at, status, recorded_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO markets (slug, opens_at, closes_at, resolves_at, status, resolved_outcome, recorded_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
                 market.slug.0,
                 market.opens_at.0,
                 market.closes_at.0,
                 market.resolves_at.0,
                 format!("{:?}", market.status),
+                market.resolved_outcome,
                 Timestamp::now_ms().0,
             ],
         )
@@ -348,6 +350,7 @@ mod tests {
             closes_at: Timestamp(300_000),
             resolves_at: Timestamp(300_000),
             status: MarketStatus::Open,
+            resolved_outcome: None,
             order_price_min_tick_size: Price(dec!(0.01)),
             order_min_size: Shares(dec!(5)),
         }
@@ -450,5 +453,42 @@ mod tests {
             .unwrap();
         assert_eq!(ob_count, 0, "no outcome_books rows when market is None");
         assert_eq!(tick_count, 0, "no ticks rows when market is None");
+    }
+
+    #[tokio::test]
+    async fn record_market_persists_resolved_outcome() {
+        let recorder = SqliteMarketDataRecorder::open_in_memory().unwrap();
+
+        // Market with a known winning outcome.
+        let mut market = make_market("btc-updown-5m-resolved");
+        market.status = MarketStatus::Resolved;
+        market.resolved_outcome = Some("Up".to_string());
+        recorder.record_market(&market).await.unwrap();
+
+        // Market with no resolved outcome (None → SQL NULL).
+        let market_none = make_market("btc-updown-5m-open");
+        recorder.record_market(&market_none).await.unwrap();
+
+        let conn = recorder.conn.lock().unwrap();
+
+        // Check that the resolved market stored "Up".
+        let outcome: Option<String> = conn
+            .query_row(
+                "SELECT resolved_outcome FROM markets WHERE slug=?1",
+                ["btc-updown-5m-resolved"],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(outcome, Some("Up".to_string()), "expected resolved_outcome = 'Up'");
+
+        // Check that the open market stored NULL.
+        let outcome_null: Option<String> = conn
+            .query_row(
+                "SELECT resolved_outcome FROM markets WHERE slug=?1",
+                ["btc-updown-5m-open"],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(outcome_null, None, "expected resolved_outcome = NULL for open market");
     }
 }

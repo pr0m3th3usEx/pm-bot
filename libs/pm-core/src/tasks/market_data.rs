@@ -180,6 +180,7 @@ mod tests {
             closes_at: Timestamp(i64::MAX),
             resolves_at: Timestamp(i64::MAX),
             status: MarketStatus::Open,
+            resolved_outcome: None,
             order_price_min_tick_size: make_price("0.01"),
             order_min_size: Shares(Decimal::from_str("5").unwrap()),
         }

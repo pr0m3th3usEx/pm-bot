@@ -90,6 +90,7 @@ mod tests {
             closes_at: Timestamp::from_secs(1000),
             resolves_at: Timestamp::from_secs(1300),
             status: MarketStatus::Open,
+            resolved_outcome: None,
             order_price_min_tick_size: Price(dec!(0.01)),
             order_min_size: Shares(dec!(5)),
         }
@@ -331,6 +332,7 @@ mod quant_tests {
             closes_at: Timestamp::from_secs(1000),
             resolves_at: Timestamp::from_secs(1300),
             status: MarketStatus::Open,
+            resolved_outcome: None,
             order_price_min_tick_size: Price(dec!(0.01)),
             order_min_size: Shares(dec!(5)),
         }
