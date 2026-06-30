@@ -21,6 +21,8 @@ alloy.workspace     = true
 anyhow.workspace    = true
 reqwest             = { version = "0.12", features = ["json"] }
 chrono              = { version = "0.4", features = ["serde"] }
+# Websocket client
+tokio-tungstenite = { version = "*", features = ["native-tls"] }
 futures = "0.3.32"
 
 [dev-dependencies]

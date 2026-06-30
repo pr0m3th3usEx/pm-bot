@@ -3,11 +3,11 @@ pub mod obi;
 pub mod signal;
 pub mod vol;
 
-pub use obi::ExchangeId;
+pub use pm_core::domain::{ExchangeId, TopOfBook};
 pub use signal::QuantSignal;
 
 use normal::{d2, phi};
-use obi::{MultiExchangeObi, TopOfBook};
+use obi::MultiExchangeObi;
 use vol::VolEstimator;
 
 const SECS_PER_YEAR: f64 = 365.25 * 24.0 * 3600.0;
