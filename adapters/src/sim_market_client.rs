@@ -5,6 +5,7 @@
 //! fills using a configurable latency + quote-crossing model.
 
 use async_trait::async_trait;
+use pm_core::format::usd;
 use pm_core::{
     config::SimConfig,
     domain::{Intent, OrderUpdate, PositionRecord, RedeemReceipt},
@@ -131,7 +132,9 @@ impl MarketClient for SimMarketClient {
             limit_price = %intent.limit_price.0,
             shares = %intent.shares.0,
             token_id = %token_id.0,
-            "[dry-run] placed simulated order"
+            "📤 [dry-run] placed simulated order · {} @ {}",
+            intent.shares.0,
+            usd(intent.limit_price.0)
         );
 
         Ok(order_id)
@@ -220,7 +223,10 @@ impl MarketClient for SimMarketClient {
             position_id = position_id,
             avg_price = %avg_price.0,
             shares = %order.shares.0,
-            "[dry-run] simulated order filled"
+            "📥 [dry-run] simulated order filled · {} @ {} · cost {}",
+            order.shares.0,
+            usd(avg_price.0),
+            usd(avg_price.0 * order.shares.0)
         );
 
         Ok(OrderUpdate::Filled {
@@ -236,7 +242,7 @@ impl MarketClient for SimMarketClient {
         if let Some(order) = state.resting.remove(order_id) {
             let reservation = Self::reservation(&order.limit_price, &order.shares);
             state.release_reservation(reservation);
-            tracing::info!(order_id = %order_id, "[dry-run] cancelled simulated order");
+            tracing::info!(order_id = %order_id, "🚫 [dry-run] cancelled simulated order");
         }
         Ok(())
     }
@@ -269,7 +275,8 @@ impl MarketClient for SimMarketClient {
             position_id = ?position.id,
             payout = %payout.0,
             transaction_id = %transaction_id,
-            "[dry-run] synthetic redemption"
+            "🎁 [dry-run] synthetic redemption · {}",
+            usd(payout.0)
         );
 
         Ok(RedeemReceipt {

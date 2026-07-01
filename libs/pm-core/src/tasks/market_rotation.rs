@@ -41,7 +41,7 @@ async fn run_round(
     // 1. Resolve current market, retrying on transient errors.
     let now_secs = Timestamp::now_ms().as_secs() as u64;
     let slug = clock.current_slug(now_secs);
-    info!(market_slug = %slug, "resolving current market");
+    info!(market_slug = %slug, "🔍 resolving current market");
 
     let market = loop {
         match catalog.resolve(&slug).await {
@@ -55,7 +55,7 @@ async fn run_round(
 
     // Edge case: bot started after resolution (e.g. mid-settlement window).
     if market.status == MarketStatus::Resolved {
-        info!(market_slug = %slug, "market already resolved; publishing and rotating");
+        info!(market_slug = %slug, "🏁 market already resolved; publishing and rotating");
         market_tx.send(Some(market)).ok();
         return;
     }
@@ -67,7 +67,7 @@ async fn run_round(
     // 2. Sleep until opens_at → Open (clock-derived).
     let delay = delay_until_ms(market.opens_at.0);
     if !delay.is_zero() {
-        info!(market_slug = %slug, opens_at = ?market.opens_at, "waiting for market to open");
+        info!(market_slug = %slug, opens_at = ?market.opens_at, "⏳ waiting for market to open");
         tokio::time::sleep(delay).await;
     }
     state = state
@@ -78,15 +78,15 @@ async fn run_round(
         ..market
     };
     market_tx.send(Some(market.clone())).ok();
-    info!(market_slug = %slug, status = ?state.status(), 
+    info!(market_slug = %slug, status = ?state.status(),
         opens_at = ?market.opens_at, closes_at = ?market.closes_at, resolves_at = ?market.resolves_at,
         status = ?state.status(),
-        strike = ?market.strike, "market open");
+        strike = ?market.strike, "▶ market open");
 
     // 3. Sleep until closes_at → TradingCutoff (clock-derived).
     let delay = delay_until_ms(market.closes_at.0);
     if !delay.is_zero() {
-        info!(market_slug = %slug, closes_at = ?market.closes_at, "waiting for trading cutoff");
+        info!(market_slug = %slug, closes_at = ?market.closes_at, "⏳ waiting for trading cutoff");
         tokio::time::sleep(delay).await;
     }
     state = state
@@ -97,7 +97,7 @@ async fn run_round(
         ..market
     };
     market_tx.send(Some(market.clone())).ok();
-    info!(market_slug = %slug, "trading cutoff reached");
+    info!(market_slug = %slug, "⛔ trading cutoff reached");
 
     // 4. Kick off prefetch of next round in background so it overlaps resolution polling.
     let next_slug = clock.next_slug(Timestamp::now_ms().as_secs() as u64);
@@ -116,7 +116,7 @@ async fn run_round(
         ..market
     };
     market_tx.send(Some(market)).ok();
-    info!(market_slug = %slug, "waiting for resolution");
+    info!(market_slug = %slug, "⏳ waiting for resolution");
 
     loop {
         tokio::time::sleep(Duration::from_secs(10)).await;
@@ -126,7 +126,7 @@ async fn run_round(
                     .transition(MarketStatus::Resolved)
                     .expect("Resolving → Resolved");
                 market_tx.send(Some(m)).ok();
-                info!(market_slug = %slug, "market resolved");
+                info!(market_slug = %slug, "🏁 market resolved");
                 break;
             }
             Ok(_) => {}
@@ -137,7 +137,7 @@ async fn run_round(
     // 6. Publish prefetched next market immediately if the background fetch succeeded.
     match prefetch.await {
         Ok(Ok(next_market)) => {
-            info!(next_slug = %next_slug, "publishing prefetched next market");
+            info!(next_slug = %next_slug, "⏭ publishing prefetched next market");
             market_tx.send(Some(next_market)).ok();
         }
         Ok(Err(e)) => {

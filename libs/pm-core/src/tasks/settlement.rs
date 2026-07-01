@@ -5,6 +5,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
 use crate::domain::{ActiveMarket, PendingRedemption, PositionUpdate, Settled, Tick};
+use crate::format::{banner, signed_usd, usd};
 use crate::ports::{MarketClient, Store};
 use crate::types::{MarketStatus, Outcome, PositionStatus, Price, Timestamp, Usdc};
 
@@ -47,7 +48,7 @@ async fn handle_settlement(
         resolution_price = %price.0,
         strike = %strike.0,
         winning = winning.as_str(),
-        "market resolved — settling positions"
+        "🏁 market resolved — settling positions"
     );
 
     let positions = match store.open_positions().await {
@@ -92,12 +93,17 @@ async fn handle_settlement(
                     let pnl = receipt.payout.0 - cost; // net profit
                     info!(
                         position_id,
-                        outcome = %pos.outcome_name,
-                        shares = %pos.shares.0,
-                        cost = %cost,
-                        payout = %receipt.payout.0,
-                        profit = %pnl,
-                        "position WON — redeemed"
+                        "\n{}",
+                        banner(
+                            "🟢 WON",
+                            &[
+                                ("market", market.slug.to_string()),
+                                ("outcome", pos.outcome_name.clone()),
+                                ("shares", pos.shares.0.to_string()),
+                                ("cost → payout", format!("{} → {}", usd(cost), usd(receipt.payout.0))),
+                                ("profit", signed_usd(pnl)),
+                            ],
+                        )
                     );
                     let _ = settled_tx.send(Settled {
                         position_id,
@@ -128,11 +134,17 @@ async fn handle_settlement(
             let pnl = -cost; // full loss
             info!(
                 position_id,
-                outcome = %pos.outcome_name,
-                shares = %pos.shares.0,
-                cost = %cost,
-                loss = %cost,
-                "position LOST — no redeem"
+                "\n{}",
+                banner(
+                    "🔴 LOST",
+                    &[
+                        ("market", market.slug.to_string()),
+                        ("outcome", pos.outcome_name.clone()),
+                        ("shares", pos.shares.0.to_string()),
+                        ("cost", usd(cost)),
+                        ("loss", signed_usd(pnl)),
+                    ],
+                )
             );
             let _ = settled_tx.send(Settled {
                 position_id,

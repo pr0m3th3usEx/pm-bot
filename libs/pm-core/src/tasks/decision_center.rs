@@ -4,6 +4,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use crate::domain::{ActiveMarket, Intent, Tick};
+use crate::format::usd;
 use crate::ports::{SizingModel, Strategy};
 use crate::state::{BankrollState, OutcomeBookCache, RoundSlotState};
 use crate::strategy::{StrategyContext, StrategyDecision};
@@ -91,7 +92,7 @@ pub async fn decision_center_task(
                         debug!(
                             price = %tick.price.0,
                             secs_to_cutoff = ctx.secs_to_cutoff(),
-                            "strategy: hold"
+                            "⏸ strategy: hold"
                         );
                     }
                     StrategyDecision::Enter { outcome, confidence } => {
@@ -162,12 +163,16 @@ pub async fn decision_center_task(
                             limit_price,
                         };
 
-                        debug!(
+                        info!(
                             outcome = ?intent.outcome,
                             shares = %intent.shares.0,
                             price = %intent.limit_price.0,
                             confidence = confidence,
-                            "strategy: enter — emitting intent"
+                            "🎯 enter · {} ×{} @ {} · conf {:.2}",
+                            intent.outcome.as_str(),
+                            intent.shares.0,
+                            usd(intent.limit_price.0),
+                            confidence.unwrap_or(0.0)
                         );
 
                         // Non-blocking: executor is the race-free authority on the gate.

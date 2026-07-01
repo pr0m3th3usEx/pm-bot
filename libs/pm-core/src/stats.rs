@@ -33,8 +33,17 @@ impl WinLossStats {
         (self.losses > 0).then(|| self.wins as f64 / self.losses as f64)
     }
 
-    /// Structured `info!` summary tagged with a `context` (e.g. "after-settlement").
+    /// Scoreboard `info!` summary tagged with a `context` (e.g. "after-settlement").
+    /// Structured fields are kept for grepping; the message is a human-readable line.
     pub fn log(&self, context: &str) {
+        let win_rate = self
+            .win_rate()
+            .map(|r| format!("{:.1}% win", r * 100.0))
+            .unwrap_or_else(|| "—% win".to_string());
+        let ratio = self
+            .win_loss_ratio()
+            .map(|r| format!("{r:.2} W/L"))
+            .unwrap_or_else(|| "∞ W/L".to_string());
         info!(
             context,
             wins = self.wins,
@@ -42,7 +51,9 @@ impl WinLossStats {
             resolved = self.resolved,
             win_rate_pct = self.win_rate().map(|r| r * 100.0),
             w_l_ratio = self.win_loss_ratio(),
-            "win/loss summary"
+            "📊 RECORD [{context}]  W {} · L {}  ·  {win_rate}  ·  {ratio}",
+            self.wins,
+            self.losses,
         );
     }
 }

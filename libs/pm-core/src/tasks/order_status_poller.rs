@@ -5,7 +5,7 @@ use tokio::sync::broadcast;
 use tokio::sync::watch;
 use tokio::time::MissedTickBehavior;
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info};
+use tracing::{debug, error, info, warn};
 
 use crate::domain::OrderUpdate;
 use crate::ports::{MarketClient, Store};
@@ -68,7 +68,20 @@ async fn run_poll(
                                     | OrderUpdate::Rejected { .. }
                                     | OrderUpdate::Cancelled { .. }
                             );
-                            info!(position_id = pid, order_id = %oid, update = ?update, "order status received");
+                            match &update {
+                                OrderUpdate::Filled { avg_price, size_matched, .. } => {
+                                    info!(position_id = pid, order_id = %oid, "📥 filled · {} @ {} · cost {}", size_matched.0, crate::format::usd(avg_price.0), crate::format::usd(avg_price.0 * size_matched.0));
+                                }
+                                OrderUpdate::Rejected { reason, .. } => {
+                                    warn!(position_id = pid, order_id = %oid, "❌ order rejected · {}", reason.as_deref().unwrap_or("no reason"));
+                                }
+                                OrderUpdate::Cancelled { .. } => {
+                                    info!(position_id = pid, order_id = %oid, "🚫 order cancelled");
+                                }
+                                OrderUpdate::Submitted { .. } => {
+                                    debug!(position_id = pid, order_id = %oid, "order still pending");
+                                }
+                            }
                             if order_update_tx.send(update).is_err() {
                                 return; // no receivers left; nothing left to do
                             }

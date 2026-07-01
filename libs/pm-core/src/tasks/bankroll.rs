@@ -4,8 +4,19 @@ use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use crate::domain::{OrderUpdate, Redeemed, Settled};
+use crate::format::usd;
 use crate::state::BankrollState;
 use crate::types::Usdc;
+
+/// One-line money summary for a bankroll change.
+fn bankroll_line(event: &str, b: &BankrollState) -> String {
+    format!(
+        "💰 {event} · bankroll {} · in-play {} · pending {}",
+        usd(b.bankroll.0),
+        usd(b.money_in_play.0),
+        usd(b.about_to_be_redeemed.0),
+    )
+}
 
 pub async fn bankroll_task(
     state: Arc<RwLock<BankrollState>>,
@@ -35,12 +46,7 @@ pub async fn bankroll_task(
                     let cost = Usdc(avg_price.0 * size_matched.0);
                     let mut b = state.write().await;
                     b.update_on_fill(cost);
-                    info!(
-                        bankroll = %b.bankroll.0,
-                        money_in_play = %b.money_in_play.0,
-                        about_to_be_redeemed = %b.about_to_be_redeemed.0,
-                        "bankroll updated on fill"
-                    );
+                    info!("{}", bankroll_line("fill", &b));
                 }
                 // Submitted / Rejected / Cancelled do not affect bankroll
             }
@@ -56,23 +62,13 @@ pub async fn bankroll_task(
                 };
                 let mut b = state.write().await;
                 b.update_on_settlement(settled.cost, settled.realized_pnl);
-                info!(
-                    bankroll = %b.bankroll.0,
-                    money_in_play = %b.money_in_play.0,
-                    about_to_be_redeemed = %b.about_to_be_redeemed.0,
-                    "bankroll updated on settlement"
-                );
+                info!("{}", bankroll_line("settlement", &b));
             }
 
             Some(redeemed) = redeemed_rx.recv() => {
                 let mut b = state.write().await;
                 b.update_on_redemption(redeemed.payout);
-                info!(
-                    bankroll = %b.bankroll.0,
-                    money_in_play = %b.money_in_play.0,
-                    about_to_be_redeemed = %b.about_to_be_redeemed.0,
-                    "bankroll updated on redemption"
-                );
+                info!("{}", bankroll_line("redemption", &b));
             }
         }
     }
