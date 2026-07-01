@@ -2,6 +2,7 @@ pub mod clock;
 pub mod config;
 pub mod domain;
 pub mod error;
+pub mod format;
 pub mod ports;
 pub mod state;
 pub mod stats;

@@ -4,6 +4,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
 use crate::domain::{ActiveMarket, Intent, OrderUpdate, PositionRecord, PositionUpdate};
+use crate::format::usd;
 use crate::ports::{Admission, EntryPolicy, MarketClient, Store};
 use crate::state::RoundSlotState;
 use crate::types::{PositionStatus, Timestamp};
@@ -108,9 +109,11 @@ pub async fn executor_task(
                                 info!(
                                     position_id,
                                     order_id = %order_id,
-                                    outcome = intent.outcome.as_str(),
-                                    shares = %intent.shares.0,
-                                    "order submitted"
+                                    "📤 order submitted · {} ×{} @ {} · order {}",
+                                    intent.outcome.as_str(),
+                                    intent.shares.0,
+                                    usd(intent.limit_price.0),
+                                    order_id
                                 );
                                 // Emit Submitted event for persistence task.
                                 let _ = order_update_tx.send(OrderUpdate::Submitted {
@@ -124,7 +127,7 @@ pub async fn executor_task(
                                 }).await;
                             }
                             Err(e) => {
-                                error!(position_id, error = %e, "place_order failed — freeing slot");
+                                error!(position_id, error = %e, "⚠ place_order failed — freeing slot");
                                 // Treat as immediate rejection — free the slot.
                                 slot = slot.free().unwrap_or(RoundSlotState::Empty);
                                 if slot_tx.send(slot).is_err() { break; }

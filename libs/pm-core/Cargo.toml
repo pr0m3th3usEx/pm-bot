@@ -12,6 +12,7 @@ tokio       = { workspace = true, features = ["full"] }
 polymarket_client_sdk_v2 = { version = "0.5.1", features = ["clob"] }
 tokio-util  = { workspace = true }
 tracing.workspace = true
+unicode-width.workspace = true
 async-trait.workspace = true
 thiserror.workspace = true
 serde       = { workspace = true }
