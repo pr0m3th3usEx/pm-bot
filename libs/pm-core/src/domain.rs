@@ -106,6 +106,20 @@ pub struct Tick {
     pub at: Timestamp,
 }
 
+/// Market lifecycle transition from `market_rotation` → `settlement`.
+///
+/// Delivered over an **mpsc** (not the `watch` used for latest-state), because settlement
+/// must observe *every* transition exactly once. A `watch` coalesces rapid updates and can
+/// silently drop the transient `TradingCutoff`/`Resolved` states, which caused stale/missed
+/// settlements.
+#[derive(Debug, Clone)]
+pub enum MarketLifecycle {
+    /// Trading has closed for this market; snapshot the resolution price now.
+    TradingCutoff(ActiveMarket),
+    /// The market has resolved; settle any open positions against it.
+    Resolved(ActiveMarket),
+}
+
 /// Decision from the decision center → executor.
 #[derive(Debug, Clone)]
 pub struct Intent {

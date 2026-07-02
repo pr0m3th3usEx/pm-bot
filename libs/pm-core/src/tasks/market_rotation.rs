@@ -1,11 +1,11 @@
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::watch;
+use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
 use crate::clock::MarketClock;
-use crate::domain::ActiveMarket;
+use crate::domain::{ActiveMarket, MarketLifecycle};
 use crate::ports::MarketCatalog;
 use crate::state::MarketState;
 use crate::types::{MarketStatus, Timestamp};
@@ -14,6 +14,7 @@ pub async fn market_rotation_task(
     clock: MarketClock,
     catalog: Arc<dyn MarketCatalog>,
     market_tx: watch::Sender<Option<ActiveMarket>>,
+    lifecycle_tx: mpsc::Sender<MarketLifecycle>,
     cancel: CancellationToken,
 ) {
     info!("market_rotation_task started");
@@ -23,7 +24,7 @@ pub async fn market_rotation_task(
                 info!("market_rotation_task cancelled");
                 break;
             }
-            _ = run_round(&clock, &catalog, &market_tx) => {}
+            _ = run_round(&clock, &catalog, &market_tx, &lifecycle_tx) => {}
         }
     }
 }
@@ -33,10 +34,19 @@ fn delay_until_ms(target_ms: i64) -> Duration {
     Duration::from_millis((target_ms - now).max(0) as u64)
 }
 
+/// Send a lifecycle event to settlement. A closed/full channel is logged but never aborts the
+/// round — market rotation must keep advancing regardless of settlement's health.
+async fn emit_lifecycle(tx: &mpsc::Sender<MarketLifecycle>, ev: MarketLifecycle) {
+    if let Err(e) = tx.send(ev).await {
+        warn!(error = %e, "failed to send market lifecycle event to settlement");
+    }
+}
+
 async fn run_round(
     clock: &MarketClock,
     catalog: &Arc<dyn MarketCatalog>,
     market_tx: &watch::Sender<Option<ActiveMarket>>,
+    lifecycle_tx: &mpsc::Sender<MarketLifecycle>,
 ) {
     // 1. Resolve current market, retrying on transient errors.
     let now_secs = Timestamp::now_ms().as_secs() as u64;
@@ -56,7 +66,8 @@ async fn run_round(
     // Edge case: bot started after resolution (e.g. mid-settlement window).
     if market.status == MarketStatus::Resolved {
         info!(market_slug = %slug, "🏁 market already resolved; publishing and rotating");
-        market_tx.send(Some(market)).ok();
+        market_tx.send(Some(market.clone())).ok();
+        emit_lifecycle(lifecycle_tx, MarketLifecycle::Resolved(market)).await;
         return;
     }
 
@@ -97,6 +108,8 @@ async fn run_round(
         ..market
     };
     market_tx.send(Some(market.clone())).ok();
+    // Lossless notify: settlement must snapshot the resolution price at this exact boundary.
+    emit_lifecycle(lifecycle_tx, MarketLifecycle::TradingCutoff(market.clone())).await;
     info!(market_slug = %slug, "⛔ trading cutoff reached");
 
     // 4. Kick off prefetch of next round in background so it overlaps resolution polling.
@@ -125,7 +138,9 @@ async fn run_round(
                 state
                     .transition(MarketStatus::Resolved)
                     .expect("Resolving → Resolved");
-                market_tx.send(Some(m)).ok();
+                market_tx.send(Some(m.clone())).ok();
+                // Lossless notify: settlement settles positions against this resolved market.
+                emit_lifecycle(lifecycle_tx, MarketLifecycle::Resolved(m)).await;
                 info!(market_slug = %slug, "🏁 market resolved");
                 break;
             }

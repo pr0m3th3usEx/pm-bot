@@ -5,9 +5,17 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 
+[lib]
+name = "pm_bot"
+path = "src/lib.rs"
+
 [[bin]]
 name = "pm-bot"
 path = "src/main.rs"
+
+[[bin]]
+name = "pm-recover-settlements"
+path = "src/bin/recover_settlements.rs"
 
 [dependencies]
 pm-core             = { path = "../../libs/pm-core" }

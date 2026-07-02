@@ -7,11 +7,9 @@
 //!   5. sleep_until(next window) then begin trading
 //!   6. Ctrl-C → cancel token → join → exit
 
-use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use adapters::gamma_market_catalog::GammaMarketCatalog;
 use pm_core::config::{ExecutionMode, SimConfig};
 use pm_core::tasks::decision_center::decision_center_task;
 use pm_core::tasks::executor::executor_task;
@@ -35,7 +33,7 @@ use pm_core::{
     },
 };
 use pm_strategy::sizing::{FixedFractionSizingModel, SIZING_FRACTION};
-use pm_strategy::strategy::V1BasicStrategy;
+use pm_strategy::strategy::{CompositeConfig, CompositeStrategy};
 use tokio::sync::RwLock;
 
 // ─── V1 entry policy: max one open position per round ─────────────────────────
@@ -49,15 +47,6 @@ impl EntryPolicy for OnePositionPolicy {
         } else {
             Admission::Reject
         }
-    }
-}
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-fn db_path_for(mode: ExecutionMode, sim_cfg: &SimConfig) -> String {
-    match mode {
-        ExecutionMode::Live => "pm-bot.db".to_owned(),
-        ExecutionMode::DryRun => sim_cfg.dryrun_db_path.clone(),
     }
 }
 
@@ -83,14 +72,9 @@ async fn main() -> anyhow::Result<()> {
     info!(mode = ?mode, record_session, "execution mode");
 
     // 3. Build adapters — different paths for Live vs DryRun.
-    let store: Arc<dyn pm_core::ports::Store> = Arc::new({
-        let db_path = db_path_for(mode, &sim_cfg);
-        adapters::sqlite_store::SqliteStore::open(&db_path)
-            .expect("failed to open SQLite store")
-    });
+    let store: Arc<dyn pm_core::ports::Store> = pm_bot::bootstrap::open_store(mode, &sim_cfg);
 
-    let catalog_inner: Arc<dyn pm_core::ports::MarketCatalog> =
-        Arc::new(GammaMarketCatalog::new());
+    let catalog_inner: Arc<dyn pm_core::ports::MarketCatalog> = pm_bot::bootstrap::build_catalog();
 
     let book_cache = Arc::new(RwLock::new(OutcomeBookCache::default()));
 
@@ -112,70 +96,8 @@ async fn main() -> anyhow::Result<()> {
         None
     };
 
-    let (client, starting_bankroll): (Arc<dyn pm_core::ports::MarketClient>, _) = match mode {
-        ExecutionMode::DryRun => {
-            info!(
-                virtual_bankroll = %sim_cfg.virtual_bankroll.0,
-                fill_latency_ms = sim_cfg.fill_latency_ms,
-                taker_fee_bps = sim_cfg.taker_fee_bps,
-                always_fill = sim_cfg.always_fill,
-                "[dry-run] building SimMarketClient"
-            );
-            let bankroll = sim_cfg.virtual_bankroll.clone();
-            let sim_client = Arc::new(adapters::sim_market_client::SimMarketClient::new(
-                book_cache.clone(),
-                sim_cfg.clone(),
-            ));
-            (sim_client, bankroll)
-        }
-        ExecutionMode::Live => {
-            // Load secrets — required for live mode.
-            let private_key =
-                std::env::var("POLYGON_PRIVATE_KEY").expect("POLYGON_PRIVATE_KEY must be set");
-            let relayer_api_key =
-                std::env::var("RELAYER_API_KEY").expect("RELAYER_API_KEY must be set");
-            let rpc_url = std::env::var("POLYGON_RPC_URL").expect("POLYGON_RPC_URL must be set");
-
-            use adapters::clob_market_client::{ClobMarketClient, CLOB_API_URL};
-            use polymarket_client_sdk_v2::auth::{LocalSigner, Signer as PmSigner};
-            use polymarket_client_sdk_v2::clob::types::SignatureType;
-            use polymarket_client_sdk_v2::clob::{Client as ClobClient, Config};
-            use polymarket_client_sdk_v2::{derive_safe_wallet, POLYGON};
-
-            let signer = LocalSigner::from_str(&private_key)
-                .expect("error with local signer")
-                .with_chain_id(Some(POLYGON));
-
-            let clob_client = ClobClient::new(CLOB_API_URL, Config::default())
-                .expect("error build clob client")
-                .authentication_builder(&signer)
-                .signature_type(SignatureType::GnosisSafe)
-                .authenticate()
-                .await
-                .expect("error authenticating clob client");
-
-            let safe_address = derive_safe_wallet(clob_client.address(), POLYGON)
-                .expect("error deriving safe wallet address");
-
-            let live_client: Arc<dyn pm_core::ports::MarketClient> = Arc::new(
-                ClobMarketClient::new(
-                    clob_client,
-                    signer,
-                    safe_address,
-                    relayer_api_key,
-                    rpc_url,
-                ),
-            );
-
-            // Fetch starting balance from chain.
-            let starting = live_client
-                .balance()
-                .await
-                .expect("failed to fetch starting balance");
-            info!(balance = %starting.0, "starting USDC balance");
-            (live_client, starting)
-        }
-    };
+    let (client, starting_bankroll): (Arc<dyn pm_core::ports::MarketClient>, _) =
+        pm_bot::bootstrap::build_client(mode, &sim_cfg, book_cache.clone()).await?;
 
     let catalog: Arc<dyn pm_core::ports::MarketCatalog> = if record_session {
         if let Some(ref sink) = recorder {
@@ -190,10 +112,7 @@ async fn main() -> anyhow::Result<()> {
         catalog_inner
     };
 
-    let strategy = Arc::new(V1BasicStrategy::new(
-        120, // enter within 2 minutes of cutoff
-        rust_decimal_macros::dec!(0.02),
-    ));
+    let strategy = Arc::new(CompositeStrategy::new(CompositeConfig::default()));
     let sizing: Arc<dyn pm_core::ports::SizingModel> =
         Arc::new(FixedFractionSizingModel::new(SIZING_FRACTION));
     let policy: Arc<dyn EntryPolicy> = Arc::new(OnePositionPolicy);
@@ -202,6 +121,9 @@ async fn main() -> anyhow::Result<()> {
     // 4. Wire channels.
     let (tick_tx, _) = broadcast::channel::<pm_core::domain::Tick>(256);
     let (market_tx, market_rx) = watch::channel::<Option<ActiveMarket>>(None);
+    // Lossless lifecycle stream to settlement (watch coalesces; settlement must see every event).
+    let (lifecycle_tx, lifecycle_rx) =
+        mpsc::channel::<pm_core::domain::MarketLifecycle>(16);
     let (intent_tx, intent_rx) = mpsc::channel::<pm_core::domain::Intent>(8);
     let (order_update_tx, _) = broadcast::channel::<pm_core::domain::OrderUpdate>(64);
     let (settled_tx, _) = broadcast::channel::<pm_core::domain::Settled>(16);
@@ -254,6 +176,7 @@ async fn main() -> anyhow::Result<()> {
         clock,
         catalog.clone(),
         market_tx,
+        lifecycle_tx,
         cancel.clone(),
     ));
 
@@ -316,7 +239,7 @@ async fn main() -> anyhow::Result<()> {
     let h_settlement = tokio::spawn(settlement_task(
         client.clone(),
         store.clone(),
-        market_rx,
+        lifecycle_rx,
         tick_tx.subscribe(),
         settled_tx.clone(),
         pending_tx,

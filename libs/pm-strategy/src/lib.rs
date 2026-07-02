@@ -4,6 +4,7 @@
 //! contract types live in `pm-core` (so `pm-core` tasks can depend on them without a
 //! cycle). This crate holds the concrete implementations that get wired in by the app.
 
+pub mod indicators;
 pub mod model;
 pub mod sizing;
 pub mod strategy;

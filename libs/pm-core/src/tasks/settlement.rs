@@ -1,13 +1,15 @@
 use std::collections::VecDeque;
 use std::sync::Arc;
-use tokio::sync::{broadcast, mpsc, watch};
+use tokio::sync::{broadcast, mpsc};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
-use crate::domain::{ActiveMarket, PendingRedemption, PositionUpdate, Settled, Tick};
+use crate::domain::{
+    ActiveMarket, MarketLifecycle, PendingRedemption, PositionUpdate, Settled, Tick,
+};
 use crate::format::{banner, signed_usd, usd};
 use crate::ports::{MarketClient, Store};
-use crate::types::{MarketStatus, Outcome, PositionStatus, Price, Timestamp, Usdc};
+use crate::types::{Outcome, PositionStatus, Price, Timestamp, Usdc};
 
 const TICK_CACHE: usize = 50;
 
@@ -19,35 +21,62 @@ fn resolution_price(ticks: &VecDeque<Tick>, closes_at: Timestamp) -> Option<Pric
         .map(|t| t.price.clone())
 }
 
-async fn handle_settlement(
-    client: &Arc<dyn MarketClient>,
-    store: &Arc<dyn Store>,
-    market: &ActiveMarket,
-    resolution_price: Option<Price>,
-    settled_tx: &broadcast::Sender<Settled>,
-    pending_tx: &mpsc::Sender<PendingRedemption>,
-) {
-    // Need both a strike and a resolution price to decide outcomes.
-    let Some(strike) = market.strike.clone() else {
-        warn!(market_slug = %market.slug, "no strike on resolved market — cannot settle");
-        return;
-    };
-    let Some(price) = resolution_price else {
-        warn!(market_slug = %market.slug, "no pre-cutoff price available — cannot settle");
-        return;
-    };
-
-    // Winning outcome mirrors V1BasicStrategy: Up if price > strike, else Down.
-    let winning = if price.0 > strike.0 {
+/// Determine the winning outcome NAME for a resolved market.
+///
+/// Prefers the authoritative `resolved_outcome` reported by the market catalog (Gamma), which is
+/// what actually pays out. Falls back to a local `price > strike` decision only when the catalog
+/// did not report a winner (e.g. a tie or parse failure) and a resolution price is available.
+///
+/// Compare the result against a position's `outcome_name` case-insensitively — the catalog and the
+/// local fallback (`Outcome::as_str`) may not match the stored vocabulary's exact casing.
+pub fn winning_outcome_name(market: &ActiveMarket, resolution_price: Option<&Price>) -> Option<String> {
+    if let Some(outcome) = &market.resolved_outcome {
+        return Some(outcome.clone());
+    }
+    // Fallback: local price>strike (mirrors V1BasicStrategy; price==strike → Down).
+    let strike = market.strike.as_ref()?;
+    let price = resolution_price?;
+    let outcome = if price.0 > strike.0 {
         Outcome::Up
     } else {
         Outcome::Down
     };
+    Some(outcome.as_str().to_string())
+}
+
+/// Settle every `Filled`/`Settling` position for `market`: redeem winners, mark losers `Lost`.
+///
+/// Reusable by both the live settlement task and the offline recovery binary, hence the optional
+/// channels (the recovery tool has no live broadcast/mpsc consumers).
+pub async fn settle_market_positions(
+    client: &Arc<dyn MarketClient>,
+    store: &Arc<dyn Store>,
+    market: &ActiveMarket,
+    resolution_price: Option<Price>,
+    settled_tx: Option<&broadcast::Sender<Settled>>,
+    pending_tx: Option<&mpsc::Sender<PendingRedemption>>,
+) {
+    // Authoritative winner: prefer catalog `resolved_outcome`, else local price>strike.
+    let Some(winning_name) = winning_outcome_name(market, resolution_price.as_ref()) else {
+        warn!(
+            market_slug = %market.slug,
+            has_strike = market.strike.is_some(),
+            has_price = resolution_price.is_some(),
+            "no resolved_outcome and no price fallback — cannot settle"
+        );
+        return;
+    };
+    let winner_source = if market.resolved_outcome.is_some() {
+        "resolved_outcome"
+    } else {
+        "price_fallback"
+    };
     info!(
         market_slug = %market.slug,
-        resolution_price = %price.0,
-        strike = %strike.0,
-        winning = winning.as_str(),
+        winning = %winning_name,
+        winner_source,
+        resolution_price = resolution_price.as_ref().map(|p| p.0.to_string()),
+        strike = market.strike.as_ref().map(|p| p.0.to_string()),
         "🏁 market resolved — settling positions"
     );
 
@@ -59,12 +88,13 @@ async fn handle_settlement(
         }
     };
 
-    for pos in positions
-        .into_iter()
-        .filter(|p| p.status == PositionStatus::Filled && p.market_slug == market.slug)
-    {
+    for pos in positions.into_iter().filter(|p| {
+        matches!(p.status, PositionStatus::Filled | PositionStatus::Settling)
+            && p.market_slug == market.slug
+    }) {
         let position_id = pos.id.expect("stored position must have id");
-        let won = pos.outcome_name == winning.as_str();
+        // Case-insensitive: catalog / local-fallback casing may differ from stored vocabulary.
+        let won = pos.outcome_name.eq_ignore_ascii_case(&winning_name);
 
         // Cost basis from the actual fill (fall back to limit price defensively).
         let entry = pos
@@ -105,20 +135,24 @@ async fn handle_settlement(
                             ],
                         )
                     );
-                    let _ = settled_tx.send(Settled {
-                        position_id,
-                        status: PositionStatus::Won,
-                        realized_pnl: Usdc(pnl),
-                        cost: Usdc(cost),
-                    });
+                    if let Some(settled_tx) = settled_tx {
+                        let _ = settled_tx.send(Settled {
+                            position_id,
+                            status: PositionStatus::Won,
+                            realized_pnl: Usdc(pnl),
+                            cost: Usdc(cost),
+                        });
+                    }
                     if let Some(tx_id) = receipt.transaction_id {
-                        let _ = pending_tx
-                            .send(PendingRedemption {
-                                position_id,
-                                transaction_id: tx_id,
-                                payout: receipt.payout,
-                            })
-                            .await;
+                        if let Some(pending_tx) = pending_tx {
+                            let _ = pending_tx
+                                .send(PendingRedemption {
+                                    position_id,
+                                    transaction_id: tx_id,
+                                    payout: receipt.payout,
+                                })
+                                .await;
+                        }
                     } else {
                         warn!(
                             position_id,
@@ -146,12 +180,14 @@ async fn handle_settlement(
                     ],
                 )
             );
-            let _ = settled_tx.send(Settled {
-                position_id,
-                status: PositionStatus::Lost,
-                realized_pnl: Usdc(pnl),
-                cost: Usdc(cost),
-            });
+            if let Some(settled_tx) = settled_tx {
+                let _ = settled_tx.send(Settled {
+                    position_id,
+                    status: PositionStatus::Lost,
+                    realized_pnl: Usdc(pnl),
+                    cost: Usdc(cost),
+                });
+            }
         }
     }
 }
@@ -159,7 +195,7 @@ async fn handle_settlement(
 pub async fn settlement_task(
     client: Arc<dyn MarketClient>,
     store: Arc<dyn Store>,
-    mut market_rx: watch::Receiver<Option<ActiveMarket>>,
+    mut lifecycle_rx: mpsc::Receiver<MarketLifecycle>,
     mut tick_rx: broadcast::Receiver<Tick>,
     settled_tx: broadcast::Sender<Settled>,
     pending_tx: mpsc::Sender<PendingRedemption>,
@@ -192,28 +228,116 @@ pub async fn settlement_task(
                 }
             }
 
-            Ok(()) = market_rx.changed() => {
-                let market = market_rx.borrow_and_update().clone();
-                let Some(market) = market else { continue };
-                match market.status {
+            // Lossless mpsc — every TradingCutoff/Resolved is delivered exactly once, in order.
+            ev = lifecycle_rx.recv() => {
+                let Some(ev) = ev else { break }; // sender dropped → shut down
+                match ev {
                     // Capture the resolution price while the cache straddles the boundary.
-                    MarketStatus::TradingCutoff => {
+                    MarketLifecycle::TradingCutoff(market) => {
                         cutoff_price = resolution_price(&ticks, market.closes_at);
                         match &cutoff_price {
                             Some(p) => info!(market_slug = %market.slug, price = %p.0, "captured resolution price at cutoff"),
                             None => warn!(market_slug = %market.slug, "no pre-cutoff tick cached at TradingCutoff"),
                         }
                     }
-                    MarketStatus::Resolved => {
+                    MarketLifecycle::Resolved(market) => {
                         // Prefer the cutoff snapshot; fall back to a buffer scan (cold start).
                         let price = cutoff_price
                             .take()
                             .or_else(|| resolution_price(&ticks, market.closes_at));
-                        handle_settlement(&client, &store, &market, price, &settled_tx, &pending_tx).await;
+                        settle_market_positions(
+                            &client, &store, &market, price, Some(&settled_tx), Some(&pending_tx),
+                        ).await;
                     }
-                    _ => {}
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::{Market, MarketOutcome};
+    use crate::types::{MarketSlug, MarketStatus, MarketType, Shares, TokenId};
+    use alloy::hex::FromHex;
+    use alloy::primitives::FixedBytes;
+    use polymarket_client_sdk_v2::types::U256;
+    use rust_decimal_macros::dec;
+
+    fn market(strike: Option<Price>, resolved_outcome: Option<&str>) -> Market {
+        Market {
+            slug: MarketSlug("btc-updown-5m-1000".into()),
+            market_type: MarketType::UpDown,
+            event_id: "e1".into(),
+            question_id: FixedBytes::from_hex(
+                "0x0000000000000000000000000000000000000000000000000000000000000001",
+            )
+            .unwrap(),
+            condition_id: FixedBytes::from_hex(
+                "0x0000000000000000000000000000000000000000000000000000000000000001",
+            )
+            .unwrap(),
+            outcomes: vec![
+                MarketOutcome { name: "Up".into(), token_id: TokenId(U256::from(1u64)) },
+                MarketOutcome { name: "Down".into(), token_id: TokenId(U256::from(2u64)) },
+            ],
+            strike,
+            opens_at: Timestamp(0),
+            closes_at: Timestamp::from_secs(1000),
+            resolves_at: Timestamp::from_secs(1000),
+            status: MarketStatus::Resolved,
+            resolved_outcome: resolved_outcome.map(|s| s.to_string()),
+            order_price_min_tick_size: Price(dec!(0.01)),
+            order_min_size: Shares(dec!(5)),
+        }
+    }
+
+    #[test]
+    fn prefers_resolved_outcome_over_price() {
+        // resolved_outcome says Down even though price(65010) > strike(65000) would say Up.
+        let m = market(Some(Price(dec!(65000))), Some("Down"));
+        let winner = winning_outcome_name(&m, Some(&Price(dec!(65010))));
+        assert_eq!(winner.as_deref(), Some("Down"));
+    }
+
+    #[test]
+    fn falls_back_to_price_above_strike() {
+        let m = market(Some(Price(dec!(65000))), None);
+        let winner = winning_outcome_name(&m, Some(&Price(dec!(65010))));
+        assert_eq!(winner.as_deref(), Some("Up"));
+    }
+
+    #[test]
+    fn falls_back_to_price_at_or_below_strike_is_down() {
+        let m = market(Some(Price(dec!(65000))), None);
+        assert_eq!(
+            winning_outcome_name(&m, Some(&Price(dec!(64990)))).as_deref(),
+            Some("Down")
+        );
+        // price == strike → Down (tie-break).
+        assert_eq!(
+            winning_outcome_name(&m, Some(&Price(dec!(65000)))).as_deref(),
+            Some("Down")
+        );
+    }
+
+    #[test]
+    fn none_when_no_outcome_and_no_price() {
+        let m = market(Some(Price(dec!(65000))), None);
+        assert_eq!(winning_outcome_name(&m, None), None);
+    }
+
+    #[test]
+    fn none_when_no_outcome_and_no_strike() {
+        let m = market(None, None);
+        assert_eq!(winning_outcome_name(&m, Some(&Price(dec!(65010)))), None);
+    }
+
+    #[test]
+    fn resolved_outcome_used_even_without_strike_or_price() {
+        // Recovery-tool path: no live price, no strike, but catalog gave the winner.
+        let m = market(None, Some("Up"));
+        assert_eq!(winning_outcome_name(&m, None).as_deref(), Some("Up"));
     }
 }
