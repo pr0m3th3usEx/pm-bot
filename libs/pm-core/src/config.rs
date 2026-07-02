@@ -37,6 +37,45 @@ impl ExecutionMode {
     }
 }
 
+// ─── Strategy selection ───────────────────────────────────────────────────────
+
+/// Selects which `Strategy` implementation `main.rs` wires in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum StrategyKind {
+    /// Composite weighted-signal strategy (current default).
+    #[default]
+    Composite,
+    /// Quantitative binary-option pricing strategy.
+    Quant,
+    /// V1 heuristic (time-window + price−strike margin).
+    V1Basic,
+}
+
+impl FromStr for StrategyKind {
+    type Err = CoreError;
+
+    fn from_str(s: &str) -> Result<Self> {
+        match s.to_lowercase().as_str() {
+            "composite" => Ok(Self::Composite),
+            "quant" => Ok(Self::Quant),
+            "v1-basic" | "v1basic" | "basic" => Ok(Self::V1Basic),
+            other => Err(CoreError::UnknownVariant(format!(
+                "unknown STRATEGY '{other}'; expected 'composite', 'quant', or 'v1-basic'"
+            ))),
+        }
+    }
+}
+
+impl StrategyKind {
+    /// Read `STRATEGY` env var; default `Composite`.
+    pub fn from_env() -> Result<Self> {
+        match std::env::var("STRATEGY") {
+            Ok(val) => val.parse(),
+            Err(_) => Ok(Self::Composite),
+        }
+    }
+}
+
 // ─── Sim config ───────────────────────────────────────────────────────────────
 
 /// Configuration for `SimMarketClient` (dry-run mode).
@@ -100,5 +139,28 @@ impl SimConfig {
             always_fill,
             dryrun_db_path,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn strategy_kind_parses_known_values() {
+        assert_eq!("composite".parse::<StrategyKind>().unwrap(), StrategyKind::Composite);
+        assert_eq!("Quant".parse::<StrategyKind>().unwrap(), StrategyKind::Quant);
+        assert_eq!("v1-basic".parse::<StrategyKind>().unwrap(), StrategyKind::V1Basic);
+        assert_eq!("v1basic".parse::<StrategyKind>().unwrap(), StrategyKind::V1Basic);
+    }
+
+    #[test]
+    fn strategy_kind_rejects_garbage() {
+        assert!("nope".parse::<StrategyKind>().is_err());
+    }
+
+    #[test]
+    fn strategy_kind_default_is_composite() {
+        assert_eq!(StrategyKind::default(), StrategyKind::Composite);
     }
 }

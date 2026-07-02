@@ -4,12 +4,26 @@
 use std::str::FromStr;
 use std::sync::Arc;
 
-use pm_core::config::{ExecutionMode, SimConfig};
-use pm_core::ports::{MarketCatalog, MarketClient, Store};
+use pm_core::config::{ExecutionMode, SimConfig, StrategyKind};
+use pm_core::ports::{MarketCatalog, MarketClient, Store, Strategy};
 use pm_core::state::OutcomeBookCache;
 use pm_core::types::Usdc;
+use pm_strategy::strategy::{
+    CompositeConfig, CompositeStrategy, QuantStrategy, QuantStrategyConfig, V1BasicStrategy,
+};
+use rust_decimal_macros::dec;
 use tokio::sync::RwLock;
 use tracing::info;
+
+/// Build the active strategy for the given kind (default configs).
+pub fn build_strategy(kind: StrategyKind) -> Arc<dyn Strategy> {
+    match kind {
+        StrategyKind::Composite => Arc::new(CompositeStrategy::new(CompositeConfig::default())),
+        StrategyKind::Quant => Arc::new(QuantStrategy::new(QuantStrategyConfig::default())),
+        // Preserve the values previously hardcoded in main.rs.
+        StrategyKind::V1Basic => Arc::new(V1BasicStrategy::new(120, dec!(0.02))),
+    }
+}
 
 /// SQLite path for the given execution mode.
 pub fn db_path_for(mode: ExecutionMode, sim_cfg: &SimConfig) -> String {

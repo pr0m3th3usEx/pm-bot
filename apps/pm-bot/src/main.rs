@@ -33,7 +33,6 @@ use pm_core::{
     },
 };
 use pm_strategy::sizing::{FixedFractionSizingModel, SIZING_FRACTION};
-use pm_strategy::strategy::{CompositeConfig, CompositeStrategy};
 use tokio::sync::RwLock;
 
 // ─── V1 entry policy: max one open position per round ─────────────────────────
@@ -112,7 +111,10 @@ async fn main() -> anyhow::Result<()> {
         catalog_inner
     };
 
-    let strategy = Arc::new(CompositeStrategy::new(CompositeConfig::default()));
+    let strategy_kind =
+        pm_core::config::StrategyKind::from_env().expect("invalid STRATEGY env var");
+    info!(strategy = ?strategy_kind, "selected strategy");
+    let strategy = pm_bot::bootstrap::build_strategy(strategy_kind);
     let sizing: Arc<dyn pm_core::ports::SizingModel> =
         Arc::new(FixedFractionSizingModel::new(SIZING_FRACTION));
     let policy: Arc<dyn EntryPolicy> = Arc::new(OnePositionPolicy);
